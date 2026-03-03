@@ -6,7 +6,7 @@
 # Key properties:
 #   - Dense model: BF16 LoRA (no quantization needed)
 #   - batch_size > 1 safe (no MoE routing NaN)
-#   - GRPO: non-colocated vLLM server mode with LoRA weight sync
+#   - Online RL: non-colocated vLLM server mode with LoRA weight sync
 #   - ~48 GB BF16 inference
 #
 # Architecture: MistralForCausalLM (dense transformer)
@@ -107,7 +107,7 @@ online_rl:
   pytorch_cuda_alloc_conf: "expandable_segments:True"
   zero_variance_filter: true
   dynamic_sampling:
-    type: "filter"
+    type: null
     max_sample_batches: 10
   step_wise_trajectories: false
   agent_class: trajgym.agent.default_agent.DefaultStepAgent

@@ -1,18 +1,17 @@
-# Baseline Evaluation: All 40 CyBench Challenges (Qwen3.5-27B-FP8)
+# Baseline Evaluation: All 40 CyBench Challenges
 # ===================================================================
-# Pre-training baseline measurement for Qwen3.5-27B against the full
-# CyBench benchmark.  Run BEFORE SFT/GRPO to establish solve rates,
-# turn counts, and timing per challenge.  Post-training, re-run with
-# the fine-tuned model and compare via `trajgym eval compare`.
+# Pre-training baseline measurement against the full CyBench benchmark.
+# Run BEFORE SFT/Online RL to establish solve rates, turn counts, and
+# timing per challenge. Post-training, re-run with the fine-tuned model
+# and compare via `trajgym-eval compare`.
 #
 # Infrastructure:
-#   - 25 docker challenges: require running containers + SSH tunnels
+#   - 25 docker challenges: require running containers
 #   - 15 static challenges: require benchmark repo files on disk
 #   - Challenge registry: configs/challenges/cybench.yaml
-#   - Target map: configs/challenges/cybench_target_map_runpod.json
 #
-# vLLM launch (single H200, eval-only):
-#   vllm serve /workspace/models/qwen35-27b-fp8 \
+# vLLM launch (single high-memory GPU, eval-only):
+#   vllm serve <model-path> \
 #     --max-model-len 65536 --dtype bfloat16 \
 #     --gpu-memory-utilization 0.85 --trust-remote-code \
 #     --enable-auto-tool-choice --tool-call-parser qwen3_coder \
@@ -20,23 +19,21 @@
 #     --port 8001
 #
 # Usage:
-#   trajgym eval run \
-#     --model /workspace/models/qwen35-27b-fp8 \
+#   trajgym-eval run \
+#     --model <model-path> \
 #     --challenges examples/qwen35-27b/eval.yaml \
 #     --challenge-registry configs/challenges/cybench.yaml \
-#     --target-map configs/challenges/cybench_target_map_runpod.json \
 #     --max-turns 30 \
 #     --max-time 20 \
 #     --attempts 1 \
 #     --strategy chat_tools \
-#     --output /workspace/outputs/eval_baseline_qwen35_27b \
-#     --agent custom:trajgym.agent.default_agent.DefaultStepAgent
+#     --output outputs/eval_baseline
 #
 # Post-training comparison:
-#   trajgym eval compare \
-#     --base /workspace/outputs/eval_baseline_qwen35_27b/eval_report.json \
-#     --tuned /workspace/outputs/eval_finetuned_qwen35_27b/eval_report.json \
-#     --output /workspace/outputs/eval_comparison.md
+#   trajgym-eval compare \
+#     --base outputs/eval_baseline/eval_report.json \
+#     --tuned outputs/eval_finetuned/eval_report.json \
+#     --output outputs/eval_comparison.md
 #
 # Expected baseline solve rate (pre-training): 15-22% (6-9 / 40)
 # Expected runtime: ~8-13 hours serial (40 challenges x 10-20 min avg)
@@ -44,7 +41,6 @@
 # Distribution:
 #   very_easy: 5    easy: 9    medium: 3    hard: 10    expert: 11    master: 2
 #   docker: 25      static: 15
-#   crypto: 15  web: 7  misc: 5  forensics: 4  reverse: 4  pwn: 2  rev: 2  intro: 1
 
 challenges:
   # --- very_easy (5) — expected solve: 3-4 ---

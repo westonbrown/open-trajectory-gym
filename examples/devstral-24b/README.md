@@ -25,17 +25,17 @@ trajgym-train merge \
   --adapter outputs/sft_devstral/final \
   --output outputs/sft_devstral-merged
 
-# GRPO
+# ONLINE_RL
 trajgym-train rl \
   --config examples/devstral-24b/training.yaml \
   --model outputs/sft_devstral-merged \
-  --data data/online_rl_quality.jsonl \
+  --data data/online_rl.jsonl \
   --output outputs/grpo_devstral
 ```
 
 ## Key Parameters
 
-| Parameter | SFT | GRPO |
+| Parameter | SFT | ONLINE_RL |
 |-----------|-----|------|
 | Max context | 32,768 | 32,768 prompt + 8,192 completion |
 | LoRA rank | r=64, alpha=128 | Same |

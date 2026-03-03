@@ -6,7 +6,7 @@ prompt (no weight updates) using GEPA (Genetic-Pareto reflective prompt
 Evolution) against a single HackTheBox challenge.
 
 Pipeline position:
-    SFT (weights) -> GRPO (weights) -> **GEPA (prompt only)** -> Deploy
+    SFT (weights) -> Online RL (weights) -> **GEPA (prompt only)** -> Deploy
 
 Challenge: "[Very Easy] Flag Command"
     The model must discover a multi-step web exploitation chain:

@@ -6,7 +6,7 @@ GEPA evolves the agent's system prompt — no weight updates — by reflecting o
 execution traces and using Pareto selection across challenges.
 
 ```
-SFT (weights) → GRPO (weights) → GEPA (prompt only) → Deploy
+SFT (weights) → ONLINE_RL (weights) → GEPA (prompt only) → Deploy
 ```
 
 ## How it works

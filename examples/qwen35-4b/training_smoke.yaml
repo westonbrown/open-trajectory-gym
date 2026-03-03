@@ -1,19 +1,16 @@
 # Qwen3.5-4B Smoke Test Configuration (2x high-memory GPUs, 80GB+ each)
 # ==================================================================
-# Purpose: Verify full online RL pipeline E2E with the 4B model.
+# Verify full online RL pipeline E2E with the 4B model.
 #   - Flag Command challenge (web, very easy)
 #   - 3 training steps
 #   - Full trajectory logging for post-run inspection
-#   - Uses external vLLM server mode (same as production)
+#   - External vLLM server mode (same as production)
 #
 # Usage:
 #   bash examples/smoke-test/smoke_test.sh \
-#       --model /workspace/models/qwen35-4b \
+#       --model <path-to-model> \
 #       --config examples/qwen35-4b/training_smoke.yaml \
-#       --challenge-ids "[Very Easy] Flag Command" \
-#       --skip-challenges \
-#       --target-map configs/challenges/cybench_target_map_runpod.json \
-#       --train-cuda-devices 0
+#       --challenge-ids "[Very Easy] Flag Command"
 #
 # Expected runtime: ~10-15 min on 2x high-memory GPUs
 
@@ -40,7 +37,6 @@ lora:
 online_rl:
   epochs: 3
   batch_size: 1
-  # batch(1) * accum(8) must be divisible by num_gen(8): 8 % 8 = 0 ✓
   gradient_accumulation_steps: 8
   learning_rate: 8.0e-6
   warmup_ratio: 0.0
@@ -105,7 +101,7 @@ online_rl:
   policy_cpu_offload: false
   zero_variance_filter: true
   dynamic_sampling:
-    type: "filter"
+    type: null
     max_sample_batches: 15
   step_wise_trajectories: false
   allow_step_wise_with_custom_chat_template: false
@@ -125,24 +121,24 @@ online_rl:
       TRAJGYM_AGENT_MODE: "tool_calls"
   use_vllm: true
   vllm_mode: server
-  vllm_server_url: "http://localhost:18001"
+  vllm_server_url: null
   allow_remote_lora: true
   gpu_memory_utilization: 0.90
   flash_attn: false
   use_sample_packing: false
 
 reward:
-  flag_weight: 0.40
-  efficiency_weight: 0.15
-  progression_weight: 0.08
-  exploration_weight: 0.05
-  uniqueness_weight: 0.05
-  format_weight: 0.10
-  recovery_weight: 0.09
-  cognitive_weight: 0.08
-  hallucination_penalty: 0.20
-  interaction_quality_weight: 0.10
-  noise_range: 0.05
+  flag_weight: 0.85
+  efficiency_weight: 0.10
+  format_weight: 0.05
+  progression_weight: 0.0
+  exploration_weight: 0.0
+  uniqueness_weight: 0.0
+  recovery_weight: 0.0
+  cognitive_weight: 0.0
+  hallucination_penalty: 0.0
+  interaction_quality_weight: 0.0
+  noise_range: 0.0
   exploration_gamma: 0.95
   use_gdpo: false
 

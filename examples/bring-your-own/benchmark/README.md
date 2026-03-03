@@ -1,71 +1,147 @@
-# How to Add Custom Challenges
+# Bring Your Own Benchmark
 
-Add your own CTF challenges to the training pipeline by creating a challenge registry YAML file.
+Add any benchmark to the training pipeline by defining a challenge registry YAML file. The platform is domain-agnostic — CTF challenges, SWE tasks, sysadmin scenarios, data analysis problems, or anything where an agent interacts with tools over multiple turns.
 
-## Steps
+## How the Registry Works
 
-### 1. Create a challenge registry
+The challenge registry is a YAML file that tells the platform three things about each task:
 
-Copy the template and add your challenges:
+1. **What to give the agent** — a description and (optionally) local files or a network service
+2. **How to verify success** — a `ground_truth_flag` string the agent must submit via `flag_found`
+3. **Metadata for filtering** — category, difficulty, infrastructure type
+
+Every stage of the pipeline reads this file:
+
+| Stage | What the registry provides |
+|-------|---------------------------|
+| `trajgym-generate-rl` | Generates `online_rl.jsonl` seed prompts from registry entries |
+| `trajgym-train rl` | Looks up `ground_truth_flag` per challenge to compute reward |
+| `trajgym-eval` | Runs agent against each challenge, scores against ground truth |
+| `trajgym-challenges` | Manages Docker containers for challenges that need a live service |
+
+## Quick Start
+
+### 1. Create a registry
 
 ```bash
 cp examples/bring-your-own/benchmark/challenge_template.yaml \
-   configs/challenges/my_challenges.yaml
+   configs/challenges/my_benchmark.yaml
 ```
 
-Each challenge entry needs:
-- `id` -- Unique identifier
-- `name` -- Display name
-- `category` -- Challenge category (crypto, web, pwn, forensics, misc, rev)
-- `difficulty` -- One of: very_easy, easy, medium, hard, expert, master
-- `infra_type` -- `docker` (networked service) or `static` (file-only)
-- `ground_truth_flag` -- Exact flag string for reward computation
-- `description` -- Challenge description given to the agent
-- `port` -- (docker only) Host port the service is exposed on
-- `path_hint` -- (optional) Path to challenge files relative to benchmark root
+Edit the file. Each entry needs these required fields:
 
-### 2. Set up challenge infrastructure
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | string | Unique identifier (used in data files, logs, metrics) |
+| `category` | string | Arbitrary label for grouping/filtering (e.g., `web`, `crypto`, `swe`, `sysadmin`) |
+| `difficulty` | string | One of: `very_easy`, `easy`, `medium`, `hard`, `expert`, `master` |
+| `infra_type` | string | `docker` (live networked service) or `static` (local files only) |
+| `ground_truth_flag` | string | Exact string the agent must submit. Byte-exact match. |
+| `description` | string | Task description given to the agent as the user prompt |
 
-For docker challenges, ensure containers are running:
+Optional fields: `port` (docker only), `path_hint` (path to challenge files), `name` (display name).
+
+**On `category`**: This is a free-form label — not limited to CTF categories. Use whatever makes sense for your domain: `web`, `binary`, `api`, `k8s`, `database`, `networking`, etc. Categories are used for filtering and reporting only.
+
+**On `ground_truth_flag`**: This is the success signal for reward computation. For CTF benchmarks it's a literal flag string. For other domains, it can be any verifiable answer — a hash, a specific output value, a secret token planted in the environment. The agent submits it via the `flag_found` tool and the reward function checks for exact match.
+
+### 2. Set up infrastructure (if needed)
+
+**Docker challenges** — the agent connects to a live service:
 
 ```bash
-# Using the built-in challenge manager
-trajgym-challenges setup --registry configs/challenges/my_challenges.yaml
+# Start containers for your challenges
+trajgym-challenges setup --registry configs/challenges/my_benchmark.yaml
 
-# Or manage containers yourself and just provide the registry
+# Verify all services are reachable
+trajgym-challenges status --registry configs/challenges/my_benchmark.yaml
 ```
 
-For static challenges, place files at the `path_hint` paths relative to your benchmark root.
+**Static challenges** — the agent works with local files only. Place files at the `path_hint` paths relative to your benchmark root. No containers needed.
 
-### 3. Use in training
+### 3. Generate training data
 
 ```bash
-# SFT -- generate training data referencing your challenges
-trajgym-convert --registry configs/challenges/my_challenges.yaml \
-  --traces /path/to/agent/traces \
-  --output data/my_sft.jsonl
+# Create online RL seed prompts from your registry
+trajgym-generate-rl \
+  --registry configs/challenges/my_benchmark.yaml \
+  --output data/online_rl.jsonl
 
-# GRPO -- train against live challenges
+# (Optional) Validate data + registry consistency
+trajgym-validate --mode online_rl-preflight \
+  --online-rl-data data/online_rl.jsonl \
+  --challenge-registry configs/challenges/my_benchmark.yaml
+```
+
+### 4. Train and evaluate
+
+```bash
+# Online RL against your benchmark
 trajgym-train rl \
+  --model outputs/sft-merged \
+  --data data/online_rl.jsonl \
+  --output outputs/online_rl_custom \
   --config examples/qwen35-27b/training.yaml \
-  --model /path/to/sft-merged \
-  --data data/my_grpo.jsonl \
-  --output outputs/grpo_custom \
-  --challenge-registry configs/challenges/my_challenges.yaml
+  --challenge-registry configs/challenges/my_benchmark.yaml
 
-# Eval
+# Evaluate
 trajgym-eval \
-  --model /path/to/model \
-  --challenge-registry configs/challenges/my_challenges.yaml
+  --model outputs/online_rl_custom/final \
+  --challenge-registry configs/challenges/my_benchmark.yaml
 ```
 
-## Challenge Registry Format
+## Registry Examples
 
-See `configs/challenges/cybench.yaml` for the full 40-challenge CyBench registry, or `challenge_template.yaml` in this directory for an annotated single-entry example.
+### Security (CTF)
+
+```yaml
+- id: my-web-challenge
+  category: web
+  difficulty: easy
+  infra_type: docker
+  port: 8080
+  ground_truth_flag: FLAG{sql_injection_success}
+  description: >
+    Analyze the web application at localhost:8080 and find the flag.
+```
+
+### SWE / Code Generation
+
+```yaml
+- id: fix-auth-bug
+  category: swe
+  difficulty: medium
+  infra_type: static
+  path_hint: benchmark/swe-tasks/auth-bug
+  ground_truth_flag: PASS{all_tests_green_abc123}
+  description: >
+    Fix the authentication bug in the Flask app at $TMP_DIR/app.py.
+    Run the test suite with pytest. The flag is printed when all tests pass.
+```
+
+### System Administration
+
+```yaml
+- id: k8s-misconfigured-rbac
+  category: k8s
+  difficulty: hard
+  infra_type: docker
+  port: 6443
+  ground_truth_flag: ADMIN{cluster_role_escalation_complete}
+  description: >
+    A Kubernetes cluster at localhost:6443 has misconfigured RBAC.
+    Escalate from a read-only service account to cluster-admin
+    and read the flag from the kube-system namespace.
+```
 
 ## Tips
 
-- Flags must be exact byte-for-byte matches. Verify by running the challenge manually.
-- Docker challenges need a port mapping. The port in the registry is the host-side port.
-- Use `trajgym-challenges status` to verify all containers are reachable before training.
-- For remote GPU training, use `target_map_path` in your training config to map registry ports to actual endpoints (e.g., SSH tunnel ports).
+- **Flags must be byte-exact.** Verify by solving the challenge manually before adding to the registry.
+- **Docker challenges need port mappings.** The `port` field is the host-side port the container exposes.
+- **Use `trajgym-challenges status`** to verify all containers are reachable before training.
+- **Remote GPU setups**: Use `--target-map` to map registry ports to actual endpoints (e.g., SSH tunnel ports). See [docs/training.md](../../../docs/training.md) for details.
+- **Mix benchmarks**: You can combine multiple registries or put challenges from different sources in one file.
+
+## Reference
+
+See [`configs/challenges/cybench.yaml`](../../../configs/challenges/cybench.yaml) for the full 40-challenge CyBench registry, or [`challenge_template.yaml`](challenge_template.yaml) for an annotated template.

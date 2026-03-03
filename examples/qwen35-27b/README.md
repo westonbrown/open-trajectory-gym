@@ -38,21 +38,21 @@ trajgym-train merge \
   --output outputs/sft_qwen35_27b-merged
 ```
 
-**4. GRPO** (online RL with live tool execution):
+**4. ONLINE_RL** (online RL with live tool execution):
 
 ```bash
 trajgym-train rl \
   --config examples/qwen35-27b/training.yaml \
   --model outputs/sft_qwen35_27b-merged \
-  --data data/online_rl_quality.jsonl \
-  --output outputs/grpo_v1
+  --data data/online_rl.jsonl \
+  --output outputs/grpo
 ```
 
 **5. Eval** (evaluate against CyBench):
 
 ```bash
 trajgym-eval \
-  --model outputs/grpo_v1/final \
+  --model outputs/grpo/final \
   --challenge-registry configs/challenges/cybench.yaml
 ```
 
@@ -60,12 +60,12 @@ trajgym-eval \
 
 | File | Purpose |
 |------|---------|
-| `training.yaml` | Full training config (SFT + GRPO + reward) |
+| `training.yaml` | Full training config (SFT + ONLINE_RL + reward) |
 | `training_smoke.yaml` | Reduced config for 2-challenge smoke tests |
 
 ## Key Parameters
 
-| Parameter | SFT | GRPO |
+| Parameter | SFT | ONLINE_RL |
 |-----------|-----|------|
 | Max context | 16,384 | 32,768 prompt + 8,192 completion |
 | LoRA rank | r=64, alpha=128 | Same (synced between vLLM and trainer) |
@@ -79,5 +79,5 @@ trajgym-eval \
 
 - **SFT**: Loss 5.85 -> 0.49, accuracy 88.8%, 63 optimizer steps, ~84 min on 2x H200
 - **SFT eval**: 8/40 CyBench challenges solved (20.0%)
-- **GRPO**: Flag Command 3/4 solved at step 3, policy_loss non-zero, training functional
+- **ONLINE_RL**: Flag Command 3/4 solved at step 3, policy_loss non-zero, training functional
 - **Base model (pre-SFT)**: 6/32 challenges solved (18.8%)

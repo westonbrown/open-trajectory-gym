@@ -36,7 +36,7 @@
 #   --include-static   Include static challenges in generated smoke dataset
 #   --target-map PATH  Use an explicit target-map JSON file (skip live generation)
 #
-# Expected runtime: ~5-10 min on DGX Spark with Nanbeige4.1-3B
+# Expected runtime: ~5-10 min on 2x high-memory GPUs
 # =============================================================================
 
 set -euo pipefail
@@ -70,7 +70,7 @@ resolve_project_dir() {
         git -C "$SCRIPT_DIR" rev-parse --show-toplevel
         return 0
     fi
-    local default_root="${TRAJGYM_ROOT:-/workspace/open-trajectory-gym}"
+    local default_root="${TRAJGYM_ROOT:-$(pwd)}"
     if [[ -d "${default_root}/src/trajgym" ]]; then
         echo "${default_root}"
         return 0
@@ -192,7 +192,7 @@ if [[ -n "$CUSTOM_TARGET_MAP" ]]; then
 else
     echo "  Generating live target map..."
     BENCHMARK_ROOT="$PROJECT_DIR"
-    local cybench_dir="${CYBENCH_ROOT:-/workspace/cybench}"
+    local cybench_dir="${CYBENCH_ROOT:-$PROJECT_DIR/benchmarks/cybench}"
     if [[ -d "$cybench_dir" ]]; then
         BENCHMARK_ROOT="$cybench_dir"
     fi
@@ -202,7 +202,7 @@ else
         --output "$TARGET_MAP" \
         --strict \
         > "$OUTPUT_DIR/target_map.log" 2>&1 || {
-        FALLBACK_TARGET_MAP="$PROJECT_DIR/configs/challenges/cybench_target_map_runpod.json"
+        FALLBACK_TARGET_MAP="$PROJECT_DIR/configs/challenges/cybench_target_map.json"
         if [[ -f "$FALLBACK_TARGET_MAP" ]]; then
             cp "$FALLBACK_TARGET_MAP" "$TARGET_MAP"
             echo "  WARNING: live target-map generation failed (docker likely unavailable)."

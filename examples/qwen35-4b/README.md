@@ -9,7 +9,7 @@ Dense Qwen3.5 text model (4B params). Smallest Qwen3.5 variant with hybrid GDN+a
 
 ## Important Caveat
 
-4B models have limited multi-step reasoning capacity. They can generate valid tool calls but fail at multi-hop exploitation chains (e.g., HTML -> JS -> API -> flag). Useful for fast iteration on training infrastructure. Monitor flag capture rate -- if below 5% after 50 GRPO steps, the model may lack capacity regardless of training quality.
+4B models have limited multi-step reasoning capacity. They can generate valid tool calls but fail at multi-hop exploitation chains (e.g., HTML -> JS -> API -> flag). Useful for fast iteration on training infrastructure. Monitor flag capture rate -- if below 5% after 50 ONLINE_RL steps, the model may lack capacity regardless of training quality.
 
 ## Quick Start
 
@@ -27,17 +27,17 @@ trajgym-train merge \
   --adapter outputs/sft_qwen35_4b/final \
   --output outputs/sft_qwen35_4b-merged
 
-# GRPO
+# ONLINE_RL
 trajgym-train rl \
   --config examples/qwen35-4b/training.yaml \
   --model outputs/sft_qwen35_4b-merged \
-  --data data/online_rl_quality.jsonl \
+  --data data/online_rl.jsonl \
   --output outputs/grpo_4b
 ```
 
 ## Key Parameters
 
-| Parameter | SFT | GRPO |
+| Parameter | SFT | ONLINE_RL |
 |-----------|-----|------|
 | Max context | 32,768 | 65,536 prompt + 32,768 completion |
 | LoRA rank | r=256, alpha=512 (RSLoRA) | Same |

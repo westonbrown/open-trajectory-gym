@@ -1,8 +1,7 @@
 # Qwen3.5-27B Smoke Test: Single Challenge (Flag Command)
 # ==============================================================
-# Validates full SkyRL GRPO pipeline with one very-easy challenge.
-# Uses FP8 base model (auto-dequantized to BF16 for training).
-# 2x high-memory GPUs (80GB+ each): GPU 0 vLLM (FP8), GPU 1 FSDP2 trainer (BF16).
+# Validates full SkyRL Online RL pipeline with one very-easy challenge.
+# 2x high-memory GPUs (80GB+ each): GPU 0 vLLM, GPU 1 FSDP2 trainer.
 
 model:
   name: "Qwen/Qwen3.5-27B"
@@ -44,13 +43,10 @@ online_rl:
   warmup_ratio: 0.10
   beta: 0.0
   loss_type: dapo
-  # 4 generations for RLOO variance — with 2, both solving = zero advantage.
-  # 140+ GB GPU can handle 4 concurrent generations within 65K context budget.
   num_generations: 4
   advantage_estimator: rloo
   max_completion_length: 3072
   max_tool_calling_iterations: 20
-  # Shorter horizon for smoke test
   horizon_schedule:
     rounds: [20]
     step_interval: 4
@@ -64,8 +60,7 @@ online_rl:
   max_samples_per_challenge: 1
   drop_static_challenges: true
   drop_unresolved_registry_samples: true
-  # Port offset for remote GPU server SSH tunnels (32810 -> 43010)
-  target_port_offset: 10200
+  target_port_offset: 0
   target_host_override: null
   target_map_path: null
   target_map_strict: false
@@ -73,7 +68,7 @@ online_rl:
   fail_on_target_collisions: true
   fail_on_flag_mismatch: true
   fail_on_missing_registry_flag: true
-  # SMOKE TEST: only require the challenges present in the data file
+  # Smoke test: only require challenges present in the data file.
   require_all_registry_challenges: false
   use_new_inference: true
   allow_new_inference_for_qwen35: true
@@ -91,13 +86,9 @@ online_rl:
   use_vllm: true
   vllm_mode: server
   vllm_server_url: null
-  # High-memory GPU: FP8 model uses ~29GB, 64K context KV cache needs ~40GB
   gpu_memory_utilization: 0.80
   max_num_seqs: 8
   max_num_batched_tokens: 16384
-  # Disabled: overlong filter zeros loss_mask when custom template adds
-  # trailing \n after {% endgeneration %} (response[-1] != eos_token_id).
-  # See Patch #22.  Safe to disable for retokenized multi-turn.
   apply_overlong_filtering: false
   max_env_workers: 4
   flash_attn: false
@@ -108,15 +99,10 @@ online_rl:
   chat_template: "qwen3_without_thinking"
   chat_template_kwargs:
     enable_thinking: true
-  # SkyRL's custom qwen3_without_thinking template does NOT have a
-  # {% if tools %} block — passing tools via chat_template_kwargs silently
-  # drops them.  Use text injection via _inject_tool_schemas() instead,
-  # which adds explicit qwen3_coder XML format instructions to the system
-  # message.  See Issue #38.
   native_tool_schemas: false
   zero_variance_filter: true
   dynamic_sampling:
-    type: null  # DISABLED: crashes when ALL gens have same reward. zero_variance_filter handles loss masking safely.
+    type: null
     max_sample_batches: 10
   step_wise_trajectories: false
   allow_step_wise_with_custom_chat_template: false
@@ -133,17 +119,17 @@ online_rl:
       TRAJGYM_AGENT_MODE: "tool_calls"
 
 reward:
-  flag_weight: 0.40
-  efficiency_weight: 0.15
-  progression_weight: 0.08
-  exploration_weight: 0.05
-  uniqueness_weight: 0.05
-  format_weight: 0.10
-  recovery_weight: 0.09
-  cognitive_weight: 0.08
-  hallucination_penalty: 0.20
-  interaction_quality_weight: 0.10
-  noise_range: 0.01
+  flag_weight: 0.85
+  efficiency_weight: 0.10
+  format_weight: 0.05
+  progression_weight: 0.0
+  exploration_weight: 0.0
+  uniqueness_weight: 0.0
+  recovery_weight: 0.0
+  cognitive_weight: 0.0
+  hallucination_penalty: 0.0
+  interaction_quality_weight: 0.0
+  noise_range: 0.0
   exploration_gamma: 0.95
   use_gdpo: false
 

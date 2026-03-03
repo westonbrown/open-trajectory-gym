@@ -6,65 +6,37 @@
 # Design philosophy: MAXIMIZE every parameter the GPU headroom allows.
 # 4B BF16 = ~8 GB model — 135 GB free per GPU. This enables:
 #   - LoRA r=256 (4x the 27B config) — massive adapter expressivity
-#   - 65K SFT context (100% data coverage, zero truncation)
-#   - batch_size=2 SFT (2x effective gradient signal per step)
-#   - 8 GRPO generations (2x the 27B config) — much richer RLOO signal
+#   - 32K SFT context (95% data coverage)
+#   - 8 Online RL generations (2x the 27B config) — richer RLOO signal
 #   - 131K vLLM context with 16 concurrent sequences
 #   - 32K completion length — room for long reasoning chains + solver code
 #   - 90% vLLM gpu_mem for maximum KV cache
 #
 # Architecture: Qwen3_5ForConditionalGeneration (text-only path)
-#   24 layers: [3x Linear (Gated DeltaNet) + 1x Full Attention] × 6
+#   24 layers: [3x Linear (Gated DeltaNet) + 1x Full Attention] x 6
 #   Hidden: 2560, Intermediate: 8960
-#   Full attention: 10Q/2KV heads, head_dim=256
-#   Linear attention: 10K/20V heads, key_dim=128
 # Vocab: 248,320 | Context: 262,144 native
 # Tool calling: qwen3_coder XML | Reasoning: <think>/</think>
 #
 # WARNING: 4B models have limited multi-step reasoning capacity.
-# The 3B failure analysis (CLAUDE.md) showed models at this scale can
-# generate valid tool calls but fail at multi-hop exploitation chains
-# (e.g., HTML → JS → API → flag). SFT teaches tool format; GRPO must
-# teach reasoning. Monitor flag capture rate — if <5% after 50 steps,
-# the model may lack the capacity regardless of training quality.
-#
-# SFT data stats (data/sft.jsonl, 285 samples):
-#   Median: ~4.4K tokens | P95: ~34K | P99: ~53K | Max: ~61K
-#   >32K: 18/285 (6.3%) | >48K: 3/285 (1.1%) | >64K: 0/285
-#   65K context = 100% coverage, zero truncation.
-#
-# Lessons applied from 9B and 27B training:
-#   - Liger CE global patch REQUIRED (65K × 248K vocab = 60.5 GiB without it)
-#   - SDPA attention (FA2 crashes with gradient checkpointing on Qwen3.5)
-#   - TRL 0.29 completion_only_loss=True
-#   - Packing for efficient batching
-#   - warmup_steps not warmup_ratio (deprecated in transformers 5.2)
-#   - apply_overlong_filtering: false (custom template adds trailing \n → zeros loss_mask)
+# Models at this scale can generate valid tool calls but fail at multi-hop
+# exploitation chains (e.g., HTML -> JS -> API -> flag). SFT teaches tool
+# format; Online RL must teach reasoning. Monitor flag capture rate — if
+# <5% after 50 steps, the model may lack the capacity for the task.
 
 model:
   name: "Qwen/Qwen3.5-4B"
   # 32K: covers 95% of SFT data (only 18/285 samples >32K get truncated).
-  # 65K OOMs because accelerate's convert_to_fp32 materializes the full logits
-  # tensor (65K × 248K × 4B = 60.5 GiB) BEFORE Liger CE can chunk it.
-  # With r=256 LoRA (~8 GiB adapter + ~8 GiB optimizer), 32K logits (30.6 GiB)
-  # is the maximum that fits alongside model state on a single H200.
   max_seq_length: 32768
   load_in_4bit: false
   load_in_8bit: false
 
 lora:
-  # r=256: 4x the 27B's r=64, 2x the 9B's r=128. With only 8 GB model weights,
-  # we have >130 GB headroom per GPU. Higher rank = more expressive adapter.
-  # At 285 SFT samples this is aggressive but the cosine LR + weight_decay
-  # provide regularization. alpha/r = 2.0 (same scaling as 9B and 27B).
-  # LoRA params at r=256: ~8 GB (significant for 4B model, ~100% of base size).
-  # This approaches the expressivity of full fine-tuning while keeping the
-  # regularization benefits and GRPO weight-sync compatibility of LoRA.
+  # r=256: aggressive rank for small model with massive GPU headroom.
+  # LoRA params at r=256: ~8 GB (~100% of base model size).
   r: 256
   alpha: 512
   dropout: 0.05
-  # Dense model: all 7 standard target modules.
-  # With r=256, adapter size is ~8 GB — still well within budget.
   target_modules:
     - q_proj
     - k_proj
@@ -74,22 +46,14 @@ lora:
     - up_proj
     - down_proj
   # RSLoRA: rank-stabilized scaling (alpha / sqrt(r) instead of alpha / r).
-  # At r=256, standard scaling gives alpha/r = 2.0 which can cause instability.
-  # RSLoRA gives alpha/sqrt(r) = 512/16 = 32 — more stable for high ranks.
+  # At r=256, standard scaling can cause instability.
   use_rslora: true
 
 sft:
   epochs: 3
-  # batch_size=1: At 65K context with 248K vocab, logits tensor per sample is
-  # 65K × 248K × 4B = 60.5 GiB float32. ForCausalLMLoss calls logits.float()
-  # BEFORE Liger CE can chunk it, so batch=2 needs 121 GiB for logits alone → OOM.
-  # batch=1 keeps logits at ≤60.5 GiB (fits on single H200 with model+optimizer).
   batch_size: 1
-  # Effective batch: 1 × 8 = 8 (same as 9B/27B configs).
   gradient_accumulation_steps: 8
   # Slightly lower LR for high-rank LoRA (r=256 with RSLoRA).
-  # RSLoRA already adjusts the effective scaling, but a touch lower LR
-  # prevents overshooting with the massive adapter capacity.
   learning_rate: 1.5e-5
   warmup_steps: 2
   weight_decay: 0.01
@@ -98,49 +62,27 @@ sft:
   # SDPA: FA2 crashes with gradient checkpointing on Qwen3.5 family.
   flash_attn: false
   gradient_checkpointing: true
-  # Memory budget for SFT on 2x high-memory GPUs (140+ GB each) @ 65K context:
-  #   Model (BF16): ~8 GB
-  #   LoRA adapters (r=256, 7 modules): ~8 GB
-  #   Optimizer (8-bit AdamW): ~16 GB
-  #   Liger CE (chunked): ~2 GB
-  #   Gradient activations (checkpointed, 65K, batch=2): ~30 GB
-  #   Framework/OS: ~5 GB
-  #   Total: ~69 GiB → fits a single high-memory GPU (140+ GB), 74 GB headroom!
-  #   With balanced sharding: ~35 GiB per GPU (108 GB headroom each!)
 
 online_rl:
   epochs: 1
   difficulty_max: "master"
   batch_size: 1
-  # batch_size(1) × grad_accum(8) = 8, divisible by num_gen(8) ✓
   gradient_accumulation_steps: 8
+  # Higher LR than 9B/27B: smaller model needs stronger signal.
   learning_rate: 8.0e-6
-  # Higher LR than 9B/27B (5e-6): smaller model needs stronger signal
-  # to update meaningfully. 4B has fewer parameters to distribute
-  # gradient updates across, so each update has more relative impact.
   warmup_ratio: 0.10
   beta: 0.0
   loss_type: dapo
-  # 8 generations: 2x the 27B's 4, 1.33x the 9B's 6.
-  # 4B BF16 model (~8 GB) + KV cache at 131K × 16 seqs fits at 0.90 gpu_mem.
-  # More generations = richer RLOO leave-one-out baselines.
-  # With 8 gens, even if 6 fail and 2 solve, RLOO produces strong gradient signal.
-  # Critical for a 4B model where flag capture rate may be low.
+  # 8 generations for richer RLOO leave-one-out baselines.
   num_generations: 8
   advantage_estimator: rloo
   # Generous context: 4B model is small enough for full 131K vLLM context.
-  #   max_completion_length: 32K — double the 9B's 16K.
-  #     Room for extended reasoning chains. Smaller models need more tokens
-  #     to "think through" problems that larger models solve in fewer tokens.
-  #   max_prompt_length: 65K — same as 9B (full SFT-length prompts).
-  #   vllm_max_model_len: 131K — same as 9B.
   max_completion_length: 32768
   max_prompt_length: 65536
   vllm_max_model_len: 131072
   max_tool_calling_iterations: 60
   horizon_schedule:
-    # Slower ramp for 4B: start conservative, expand gradually.
-    # Smaller models get lost in long horizons — build competence incrementally.
+    # Slower ramp for 4B: build competence incrementally.
     rounds: [12, 20, 32, 48, 60]
     step_interval: 5
   hard_mask_statuses:
@@ -148,9 +90,8 @@ online_rl:
     - target_mismatch
     - parser_error
     - tool_timeout
-  # Extended positive-only warmup for 4B: smaller model needs more steps
-  # to learn basic tool-call format before negative signal is useful.
-  # At 4B, early failures are mostly format errors, not reasoning failures.
+  # Extended positive-only warmup: smaller model needs more steps to learn
+  # basic tool-call format before negative signal is useful.
   positive_only_until_step: 200
   positive_only_reward_floor: 0.0
   max_samples_per_challenge: 1
@@ -187,17 +128,11 @@ online_rl:
   use_vllm: true
   vllm_mode: server
   vllm_server_url: null
-  # 4B BF16 (~8 GB) + KV cache at 131K × 16 seqs.
-  # 0.90 x GPU memory = ~129 GB available. Model 8 GB + KV ~115 GB = 123 GB. Fits.
-  # Higher gpu_mem than 9B (0.85) because model is 11 GB smaller.
   gpu_memory_utilization: 0.90
-  # 16 concurrent sequences: 2x the 9B's 8. Smaller model = smaller KV cache
-  # per sequence, so we can run more concurrent generations.
-  # This increases vLLM throughput during GRPO rollout generation.
+  # 16 concurrent sequences: smaller model = smaller KV cache per sequence.
   max_num_seqs: 16
   max_num_batched_tokens: 65536
   apply_overlong_filtering: false
-  # More env workers to keep up with 16 concurrent vLLM sequences.
   max_env_workers: 40
   flash_attn: false
   use_sample_packing: false
@@ -210,20 +145,16 @@ online_rl:
   native_tool_schemas: false
   zero_variance_filter: true
   dynamic_sampling:
-    type: "filter"
-    # Higher max_sample_batches: with 4B's lower expected solve rate,
-    # more resampling attempts before giving up on a prompt group.
+    type: null
     max_sample_batches: 15
   step_wise_trajectories: false
   allow_step_wise_with_custom_chat_template: false
   agent_class: trajgym.agent.default_agent.DefaultStepAgent
   agent_kwargs:
-    # More tolerance for no-tool-call turns: 4B may emit more reasoning
-    # before producing tool calls (smaller models are "chattier").
+    # More tolerance: 4B may emit more reasoning before producing tool calls.
     max_consecutive_no_tool_calls: 3
     # Larger tool response: 4B needs more context from tool output to
-    # compensate for weaker in-context reasoning. 3500 chars ensures
-    # HTML/JS content like Flag Command's API endpoints aren't truncated.
+    # compensate for weaker in-context reasoning.
     max_tool_response_chars: 3500
     runtime_cmd: "python src/trajgym/agent/framework_runtime_bridge.py"
     runtime_timeout_seconds: 20
@@ -232,33 +163,19 @@ online_rl:
     runtime_env:
       TRAJGYM_AGENT_FRAMEWORK: "boxpwnr_langgraph"
       TRAJGYM_AGENT_MODE: "tool_calls"
-  # Memory budget for GRPO on 2x high-memory GPUs (140+ GB each), server mode:
-  #   GPU 1 — FSDP2 Trainer:
-  #     Policy model (BF16): ~8 GB
-  #     Ref model (beta=0): ~0 GB (offloaded)
-  #     LoRA (r=256, 7 modules) + AdamW optimizer: ~24 GB
-  #     Gradient activations (checkpointed, 65K): ~15 GB
-  #     Framework/OS: ~5 GB
-  #     Total: ~52 GB (~91 GB headroom on 140+ GB GPU!)
-  #
-  #   GPU 0 — vLLM Engine (BF16):
-  #     Model (BF16): ~8 GB
-  #     KV cache (16 seqs x 131K, gpu_mem_util=0.90): ~115 GB
-  #     Overhead: ~5 GB
-  #     Total: ~128 GB (~15 GB headroom on 140+ GB GPU)
 
 reward:
-  flag_weight: 0.40
-  efficiency_weight: 0.15
-  progression_weight: 0.08
-  exploration_weight: 0.05
-  uniqueness_weight: 0.05
-  format_weight: 0.10
-  recovery_weight: 0.09
-  cognitive_weight: 0.08
-  hallucination_penalty: 0.20
-  interaction_quality_weight: 0.10
-  noise_range: 0.01
+  flag_weight: 0.85
+  efficiency_weight: 0.10
+  format_weight: 0.05
+  progression_weight: 0.0
+  exploration_weight: 0.0
+  uniqueness_weight: 0.0
+  recovery_weight: 0.0
+  cognitive_weight: 0.0
+  hallucination_penalty: 0.0
+  interaction_quality_weight: 0.0
+  noise_range: 0.0
   exploration_gamma: 0.95
   use_gdpo: false
 

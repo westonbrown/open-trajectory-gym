@@ -97,7 +97,7 @@ sft:
   # Gradient checkpointing. Trades compute for memory. Required for long contexts.
   gradient_checkpointing: true
 
-# ── Online RL (GRPO) ────────────────────────────────────────────────────────
+# ── Online RL (Online RL) ────────────────────────────────────────────────────────
 
 online_rl:
   epochs: 1
@@ -105,7 +105,7 @@ online_rl:
   batch_size: 1
   gradient_accumulation_steps: 8
 
-  # GRPO learning rate. Usually lower than SFT (1e-6 to 1e-4).
+  # Online RL learning rate. Usually lower than SFT (1e-6 to 1e-4).
   learning_rate: 5.0e-6
 
   warmup_ratio: 0.10
@@ -113,7 +113,7 @@ online_rl:
   # KL divergence coefficient. Set to 0.0 to disable reference model (saves memory).
   beta: 0.0
 
-  # Loss type. "dapo" is the standard for GRPO.
+  # Loss type. "dapo" is the standard for Online RL.
   loss_type: dapo
 
   # Number of generations per prompt. More = better RLOO variance signal.
@@ -161,7 +161,7 @@ online_rl:
 # ── Reward ───────────────────────────────────────────────────────────────────
 
 reward:
-  # For early GRPO training, use binary reward (flag only).
+  # For early Online RL training, use binary reward (flag only).
   # Switch to multi-signal after >10% flag capture rate.
   # Uncomment and adjust weights to use multi-signal reward (must sum to 1.0).
   # flag_weight: 0.40

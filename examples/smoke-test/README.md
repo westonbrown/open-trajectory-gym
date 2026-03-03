@@ -6,14 +6,14 @@
 
 1. Generates 2-sample training data (web challenges only)
 2. Starts vLLM server (if not already running)
-3. Runs 3 GRPO training steps with full trajectory logging
+3. Runs 3 ONLINE_RL training steps with full trajectory logging
 4. Validates output: checkpoints, trajectories, rewards
 
 **Challenges used**:
 - [Very Easy] Flag Command (port 32810, web)
 - [Easy] Labyrinth Linguist (port 32808, web)
 
-**Expected runtime**: ~5-10 min on DGX Spark with Nanbeige4.1-3B.
+**Expected runtime**: ~5-10 min on 2x high-memory GPUs.
 
 ## Usage
 

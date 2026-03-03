@@ -47,6 +47,7 @@ VLLM_PORT=8001
 TARGET_PORT=32810
 BUDGET="light"
 OUTPUT_DIR="outputs/gepa_flag_command"
+AGENT_CLASS=""
 SEED_PRESET=""
 DISABLE_THINKING=""
 THINKING_BUDGET=""
@@ -63,6 +64,7 @@ while [[ $# -gt 0 ]]; do
         --target-port)      TARGET_PORT="$2";      shift 2 ;;
         --budget)           BUDGET="$2";           shift 2 ;;
         --output)           OUTPUT_DIR="$2";       shift 2 ;;
+        --agent)            AGENT_CLASS="$2";      shift 2 ;;
         --seed-preset)      SEED_PRESET="$2";      shift 2 ;;
         --disable-thinking) DISABLE_THINKING="1";  shift 1 ;;
         --thinking-budget)  THINKING_BUDGET="$2";  shift 2 ;;
@@ -90,6 +92,9 @@ echo "  Reflection model: ${REFLECTION_MODEL:-"(same as agent)"}"
 echo "  vLLM:             http://localhost:${VLLM_PORT}/v1"
 echo "  Target:           http://localhost:${TARGET_PORT}"
 echo "  Budget:           ${BUDGET}"
+if [[ -n "${AGENT_CLASS}" ]]; then
+    echo "  Agent:          ${AGENT_CLASS}"
+fi
 echo "  Output:           ${OUTPUT_DIR}"
 echo "============================================================"
 
@@ -202,6 +207,10 @@ GEPA_CMD=(
     --budget "${BUDGET}"
     --challenge-registry configs/challenges/cybench.yaml
 )
+
+if [[ -n "${AGENT_CLASS}" ]]; then
+    GEPA_CMD+=(--agent "${AGENT_CLASS}")
+fi
 
 if [[ -n "${REFLECTION_MODEL}" ]]; then
     GEPA_CMD+=(--reflection-model "${REFLECTION_MODEL}")

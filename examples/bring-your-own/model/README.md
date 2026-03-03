@@ -39,7 +39,7 @@ trajgym-train sft \
   --output outputs/sft_my_model \
   --max-steps 5
 
-# If SFT works, merge and run GRPO smoke test
+# If SFT works, merge and run ONLINE_RL smoke test
 trajgym-train merge \
   --base <your-model-id> \
   --adapter outputs/sft_my_model/final \

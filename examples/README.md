@@ -13,19 +13,19 @@ Training configurations and starter guides for Open Trajectory Gym.
 
 ## User Journey
 
-1. **Setup** -- Install open-trajectory-gym: `pip install -e ".[all]"`
+1. **Setup** -- Install open-trajectory-gym: `pip install -e ".[sft,online-rl,dev]"`
 2. **Pick a model** -- Start with `qwen35-4b/` for fast iteration, or `qwen35-27b/` for production training.
 3. **Smoke test** -- Run `smoke-test/smoke_test.sh` to verify end-to-end training works.
-4. **Full pipeline** -- SFT -> merge -> GRPO -> eval. Each model directory has the commands.
-5. **Customize** -- Bring your own model, agent, or benchmark (see `bring-your-own/`).
+4. **Full pipeline** -- SFT -> merge -> ONLINE_RL -> eval. Each model directory has the commands.
+5. **Customize** -- Bring your own model, agent, benchmark, or reward function (see `bring-your-own/`).
 
 ## Customize
 
 The `bring-your-own/` directory has guides for extending the platform:
 
+- `bring-your-own/benchmark/` -- Add any benchmark (CTF, SWE, sysadmin, etc.) via YAML challenge registry
 - `bring-your-own/model/` -- Add a new model with a training.yaml config
 - `bring-your-own/agent/` -- Integrate an external agent framework (LangGraph, Autogen, etc.)
-- `bring-your-own/benchmark/` -- Add custom CTF challenges beyond CyBench
 
 ## Other Examples
 

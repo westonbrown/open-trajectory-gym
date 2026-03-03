@@ -1,17 +1,17 @@
-# 2-Challenge Smoke Test Configuration (Qwen3.5-27B-FP8, 2x high-memory GPUs)
+# 2-Challenge Smoke Test Configuration (Qwen3.5-27B, 2x high-memory GPUs)
 # ==================================================================
-# Purpose: Verify full online RL pipeline E2E before a production run.
-#   - 2 web challenges: [Very Easy] Flag Command + [Easy] Labyrinth Linguist
-#   - 3 training steps (enough to see generate → tool exec → reward → update)
+# Verify full online RL pipeline E2E before a production run.
+#   - 2 challenges: Flag Command + Labyrinth Linguist
+#   - 3 training steps (generate → tool exec → reward → update)
 #   - Full trajectory logging for post-run inspection
-#   - Uses external vLLM server mode (same as production)
+#   - External vLLM server mode (same as production)
 #
 # Usage:
 #   bash examples/smoke-test/smoke_test.sh \
-#       --model /workspace/models/qwen35-27b-fp8 \
+#       --model <path-to-model> \
 #       --challenge-ids "[Very Easy] Flag Command"
 #
-# Expected runtime: ~15-30 min on 2x high-memory GPUs (3 steps x ~5-10 min/step)
+# Expected runtime: ~15-30 min on 2x high-memory GPUs
 
 model:
   name: "Qwen/Qwen3.5-27B"
@@ -37,34 +37,19 @@ online_rl:
   # 3 epochs × (1 sample / (batch=1 × accum=4)) = 3 training steps
   epochs: 3
   batch_size: 1
-  # batch(1) * accum(4) must be divisible by num_gen(4): 4 % 4 = 0 ✓
   gradient_accumulation_steps: 4
   learning_rate: 5.0e-6
   warmup_ratio: 0.0
-  # beta=0.0 eliminates the ref model entirely — saves ~6GB model weights
-  # plus all ref forward-pass memory.  For a smoke test the KL penalty
-  # is irrelevant; the goal is to verify non-zero policy_loss.
+  # beta=0.0 eliminates the ref model — saves memory. For a smoke test
+  # the KL penalty is irrelevant; the goal is non-zero policy_loss.
   beta: 0.0
   loss_type: dapo
-  # 4 generations for RLOO variance — with 2, symmetric advantages cancel
-  # during gradient accumulation, producing policy_loss=0 (Issue #45).
-  # With 4, leave-one-out baselines differ per generation, producing
-  # asymmetric advantages that yield non-zero gradients.
-  # 140+ GB GPU can handle 4 concurrent generations within 65K context budget.
+  # 4 generations for RLOO variance — with 2, symmetric advantages cancel.
   num_generations: 4
   advantage_estimator: rloo
-  # Sequence lengths for 3B on 2x high-memory GPUs with FP8 KV cache.
-  # 65K vLLM context gives generous headroom for 20-turn multi-step
-  # tool-calling episodes.  max_completion_length is the MODEL OUTPUT
-  # per generation step — not the full context.  Capping at 4096 tokens
-  # prevents runaway thinking (model generates 40K+ token think blocks
-  # that OOM eager attention during fwd_logprobs).  The vllm_max_model_len
-  # stays at 65K so the full conversation (prompt + all turns) can grow.
-  # With FP8 KV cache, 65K × 2 seqs uses ~7 GB (vs 14 GB in BF16).
   max_completion_length: 4096
   max_prompt_length: 32768
   vllm_max_model_len: 65536
-  # 20 tool iterations — enough for easy challenges to complete.
   max_tool_calling_iterations: 20
   max_grad_norm: 1.0
   epsilon_high: 0.28
@@ -77,27 +62,21 @@ online_rl:
   generation_stop:
     - "</tool_call>"
     - "<|im_end|>"
-  # Shorter horizon for smoke test
   horizon_schedule:
     rounds: [20]
     step_interval: 4
-  # Hard-mask infra/parser failures from policy gradients
   hard_mask_statuses:
     - infra_unreachable
     - target_mismatch
     - parser_error
     - tool_timeout
-  # Warmup: mask non-positive rollouts early
   positive_only_until_step: 120
   positive_only_reward_floor: 0.0
-  # Only very_easy + easy challenges
   difficulty_max: "easy"
   drop_static_challenges: true
   drop_unresolved_registry_samples: true
-  # 1 sample per challenge → exactly 2 samples
   max_samples_per_challenge: 1
-  # Target resolution for remote GPU server tunnels
-  target_port_offset: 10200
+  target_port_offset: 0
   target_host_override: null
   target_map_path: null
   target_map_strict: false
@@ -105,69 +84,35 @@ online_rl:
   fail_on_target_collisions: true
   fail_on_flag_mismatch: true
   fail_on_missing_registry_flag: true
-  # Smoke: only require challenges present in the data file
   require_all_registry_challenges: false
-  # Legacy inference path: creates a Ray vLLM actor on GPU 0 that connects
-  # to the external server via remote_inference_engine_urls.  This naturally
-  # claims GPU 0 via Ray's placement group, ensuring the trainer gets GPU 1.
-  # The new inference path (use_new_inference: true) with external_server_urls
-  # does NOT create a vLLM actor, so the trainer may land on GPU 0 (where
-  # vLLM already occupies 70 GB) if CUDA_VISIBLE_DEVICES is unset.
   use_new_inference: false
   allow_new_inference_for_qwen35: false
-  # SkyRL custom qwen3_without_thinking template does NOT have {% if tools %}.
-  # Must use text injection via _inject_tool_schemas() (Issue #38).
   native_tool_schemas: false
-  # Qwen3.5 tool call format: qwen3_coder XML
   tool_call_format: qwen3_coder
-  # Custom template with {% generation %} loss masking, thinking stripped
   chat_template: "qwen3_without_thinking"
   chat_template_kwargs:
     enable_thinking: true
-  # Disabled: overlong filter zeros loss_mask with custom templates (Issue #43)
   apply_overlong_filtering: false
-  # Qwen3.5 conditional-generation model — text-only path for vLLM
   vllm_language_model_only: true
-  # Triton attention backend to avoid PTX issues on Hopper+ GPUs
   vllm_attention_backend: "TRITON_ATTN"
   enforce_eager: true
   enable_prefix_caching: false
   enable_chunked_prefill: true
-  # Qwen3.5 linear-attention: causal_conv1d not available on this host (ABI
-  # mismatch with torch 2.10.0 / Python 3.11). Torch fallback kernels used.
   require_fast_linear_attention: false
   pytorch_cuda_alloc_conf: "expandable_segments:True"
-  # FSDP CPU offload for the policy model during init.  Setting this to
-  # true triggers fsdp2_load_full_state_dict's cpu_offload path which
-  # accumulates BF16 params on GPU *and* CPU, then calls
-  # offload_fsdp2_model_to_cpu().  This works but leaves RoPE buffers
-  # (inv_freq) on CPU, causing device mismatch during forward pass.
-  # Instead, keep cpu_offload=false and rely on offload_after_step=true
-  # (set in runtime.py) to offload after each training step.  The 27B
-  # BF16 model (~54 GB) fits on a single high-memory GPU (140+ GB) during init and
-  # forward pass.
   policy_cpu_offload: false
-  # Zero-variance filter: discard prompt groups where all gens get same reward.
-  # On for smoke to match production behavior.
   zero_variance_filter: true
-  # SkyRL dynamic sampling (DAPO filter): resample zero-variance groups.
   dynamic_sampling:
-    type: null  # DISABLED: crashes when ALL gens have same reward. zero_variance_filter handles loss masking safely.
+    type: null
     max_sample_batches: 10
-  # Episodic scoring only (terminal reward).
   step_wise_trajectories: false
   allow_step_wise_with_custom_chat_template: false
-  # vLLM scheduling
   max_num_seqs: 8
   max_num_batched_tokens: 16384
-  # Parallel env workers
   max_env_workers: 4
-  # Default step agent with resilient mode for the online RL loop.
   agent_class: trajgym.agent.default_agent.DefaultStepAgent
   agent_kwargs:
-    # Abort after 2 consecutive turns with no tool call (match proven flagcmd config).
     max_consecutive_no_tool_calls: 2
-    # Tool response truncation: 2500 chars (Flag Command HTML needs >1200).
     max_tool_response_chars: 2500
     runtime_cmd: "python src/trajgym/agent/framework_runtime_bridge.py"
     runtime_timeout_seconds: 20
@@ -176,41 +121,34 @@ online_rl:
     runtime_env:
       TRAJGYM_AGENT_FRAMEWORK: "boxpwnr_langgraph"
       TRAJGYM_AGENT_MODE: "tool_calls"
-  # External vLLM server (overridden by launch script)
   use_vllm: true
   vllm_mode: server
-  vllm_server_url: "http://localhost:8001"
+  vllm_server_url: null
   allow_remote_lora: true
-  # High-memory GPU: FP8 model ~29GB, 65K context KV cache needs ~40GB
   gpu_memory_utilization: 0.80
   flash_attn: false
   use_sample_packing: false
 
 reward:
-  # Same as production — flag-dominant
-  flag_weight: 0.40
-  efficiency_weight: 0.15
-  progression_weight: 0.08
-  exploration_weight: 0.05
-  uniqueness_weight: 0.05
-  format_weight: 0.10
-  recovery_weight: 0.09
-  cognitive_weight: 0.08
-  hallucination_penalty: 0.20
-  # Output-aware: rewards productive HTTP interactions, penalizes dead-end 404s.
-  # Additive bonus (not part of the 1.0 sum). 0.10 = up to +0.10 for good web exploration.
-  interaction_quality_weight: 0.10
-  noise_range: 0.05
+  flag_weight: 0.85
+  efficiency_weight: 0.10
+  format_weight: 0.05
+  progression_weight: 0.0
+  exploration_weight: 0.0
+  uniqueness_weight: 0.0
+  recovery_weight: 0.0
+  cognitive_weight: 0.0
+  hallucination_penalty: 0.0
+  interaction_quality_weight: 0.0
+  noise_range: 0.0
   exploration_gamma: 0.95
   use_gdpo: false
 
 output:
-  # Save checkpoint every step for inspection
   save_steps: 1
   logging_steps: 1
   report_to: tensorboard
 
 online_rl_logging:
   enable_trajectory_logging: true
-  # Fail smoke early if no trajectory JSONL artifacts are produced.
   require_trajectory_files: true

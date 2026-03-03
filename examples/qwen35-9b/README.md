@@ -12,7 +12,7 @@ Dense Qwen3.5 text model (9B params, same hybrid GDN+attention family as 27B).
 
 - 65K SFT context covers 100% of training data (zero truncation vs 27B's 16K/65%)
 - LoRA r=128 (2x the 27B's r=64) for more expressive adapters
-- 6 GRPO generations (vs 27B's 8) with 131K vLLM context
+- 6 ONLINE_RL generations (vs 27B's 8) with 131K vLLM context
 - Double the completion length (16K vs 8K)
 
 ## Quick Start
@@ -31,17 +31,17 @@ trajgym-train merge \
   --adapter outputs/sft_qwen35_9b/final \
   --output outputs/sft_qwen35_9b-merged
 
-# GRPO
+# ONLINE_RL
 trajgym-train rl \
   --config examples/qwen35-9b/training.yaml \
   --model outputs/sft_qwen35_9b-merged \
-  --data data/online_rl_quality.jsonl \
+  --data data/online_rl.jsonl \
   --output outputs/grpo_9b
 ```
 
 ## Key Parameters
 
-| Parameter | SFT | GRPO |
+| Parameter | SFT | ONLINE_RL |
 |-----------|-----|------|
 | Max context | 65,536 | 65,536 prompt + 16,384 completion |
 | LoRA rank | r=128, alpha=256 | Same |
