@@ -14,7 +14,7 @@ For training stages, install the relevant extras:
 
 ```bash
 pip install -e ".[sft]"    # Stage 1: TRL SFT
-pip install -e ".[grpo]"   # Stage 2: SkyRL GRPO
+pip install -e ".[online_rl]"   # Stage 2: SkyRL ONLINE_RL
 pip install -e ".[gepa]"   # Stage 3: GEPA prompt evolution
 ```
 
@@ -42,15 +42,15 @@ The project has three training stages, each backed by a dedicated framework:
 | Stage | Framework | Purpose |
 |-------|-----------|---------|
 | **SFT** | [TRL](https://github.com/huggingface/trl) | Supervised fine-tuning on expert CTF traces |
-| **GRPO** | [SkyRL](https://github.com/westonbrown/SkyRL/tree/open-ctf/v0.3.1-patched) | Online reinforcement learning with live tool execution |
+| **ONLINE_RL** | [SkyRL](https://github.com/westonbrown/SkyRL/tree/open-ctf/v0.3.1-patched) | Online reinforcement learning with live tool execution |
 | **GEPA** | [DSPy](https://github.com/stanfordnlp/dspy) + [GEPA](https://arxiv.org/abs/2507.19457) | Prompt evolution (no weight updates) |
 
-The `ToolExecutor` provides 13 tools (shell, Python, file ops, flag submission) via direct subprocess execution. During online GRPO, the model generates tool calls that execute against live Docker containers — no HTTP server required.
+The `ToolExecutor` provides 13 tools (shell, Python, file ops, flag submission) via direct subprocess execution. During online ONLINE_RL, the model generates tool calls that execute against live Docker containers — no HTTP server required.
 
 ## Adding a New Model
 
 1. Create a training config at `examples/<model>/training.yaml`.
-2. Configure the TRL SFT parameters and SkyRL GRPO parameters.
+2. Configure the TRL SFT parameters and SkyRL ONLINE_RL parameters.
 3. If the model uses a non-standard chat template, add a formatter in `src/trajgym/formatters/`.
 4. Test with the validation pipeline: `trajgym-validate`.
 
@@ -59,7 +59,7 @@ See existing configs (e.g., `examples/qwen35-27b/training.yaml`) for reference.
 ## Adding a New Benchmark
 
 1. Add challenge entries to a YAML registry in `configs/challenges/` (docker or static type, with ID, flag, and difficulty).
-2. Create GRPO training data with `ground_truth_flag` fields pointing to your challenges.
+2. Create ONLINE_RL training data with `ground_truth_flag` fields pointing to your challenges.
 3. Pass the registry via `--challenge-registry configs/challenges/<name>.yaml`.
 
 No changes to the reward function, tool definitions, or training loop are needed.

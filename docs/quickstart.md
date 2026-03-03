@@ -18,8 +18,8 @@ Get up and running with Open Trajectory Gym in minutes.
 git clone https://github.com/westonbrown/open-trajectory-gym.git
 cd open-trajectory-gym
 
-# Install all training deps (SFT + GRPO + dev tools)
-uv sync --extra grpo --extra sft --extra dev
+# Install all training deps (SFT + Online RL + dev tools)
+uv sync --extra online-rl --extra sft --extra dev
 
 # Install SkyRL-Train from our patched fork (not on PyPI):
 git clone -b open-ctf/v0.3.1-patched https://github.com/westonbrown/SkyRL.git skyrl
@@ -43,8 +43,8 @@ pip install -e .
 # For SFT training (TRL)
 pip install -e ".[sft]"
 
-# For GRPO training (SkyRL + Ray + vLLM)
-pip install -e ".[grpo]"
+# For Online RL training (SkyRL + Ray + vLLM)
+pip install -e ".[online-rl]"
 # Force transformers 5.2.0 (vLLM pins <5 but Qwen3.5 needs >=5.2.0)
 pip install 'transformers>=5.2.0' 'huggingface-hub>=1.4' --no-deps
 # Install SkyRL-Train from our patched fork (not on PyPI):
@@ -122,22 +122,22 @@ trajgym-split --input data/combined.jsonl
 ```bash
 # Stage 1: SFT via TRL
 trajgym-train sft \
-    --model Nanbeige/Nanbeige4.1-3B \
+    --model Qwen/Qwen3.5-4B \
     --data data/sft.jsonl \
     --output outputs/sft
 
 # Merge LoRA adapter into base model
 trajgym-train merge \
     --adapter outputs/sft \
-    --base-model Nanbeige/Nanbeige4.1-3B \
+    --base-model Qwen/Qwen3.5-4B \
     --output outputs/sft-merged
 
-# Stage 2: Online GRPO via SkyRL
+# Stage 2: Online RL (RLOO/DAPO) via SkyRL
 trajgym-train rl \
     --model outputs/sft-merged \
     --data data/online_rl.jsonl \
     --output outputs/online_rl \
-    --config examples/qwen35-27b/training.yaml
+    --config examples/qwen35-4b/training.yaml
 
 # Stage 3: GEPA prompt optimization (no weight updates)
 trajgym-train gepa \
@@ -155,7 +155,7 @@ Note: `trajgym-train rl` runs a preflight validation gate and, by default, requi
 ```bash
 trajgym-export \
     --adapter outputs/online_rl/final \
-    --base-model Nanbeige/Nanbeige4.1-3B \
+    --base-model Qwen/Qwen3.5-4B \
     --output models/ctf-agent.gguf \
     --quant Q4_K_M
 ```
@@ -166,14 +166,11 @@ trajgym-export \
 # Stage 1: SFT
 docker compose run --rm sft
 
-# Stage 1: SFT (TRL backend for newer models, e.g. Qwen3.5)
-docker compose run --rm sft-trl
-
 # Merge LoRA
 docker compose run --rm merge
 
-# Stage 2: Online GRPO
-docker compose run --rm grpo
+# Stage 2: Online RL (RLOO/DAPO)
+docker compose run --rm online_rl
 
 # Validate pipeline
 docker compose run --rm validate

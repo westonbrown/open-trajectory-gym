@@ -4,10 +4,10 @@ Open Trajectory Gym uses a **two-protocol system** for pluggable agents. Which p
 
 | Protocol | Used By | You Own | SkyRL Owns |
 |----------|---------|---------|------------|
-| **StepAgent** | GRPO training | Tool parsing + execution | Generation (vLLM) |
+| **StepAgent** | Online RL training | Tool parsing + execution | Generation (vLLM) |
 | **Agent** | Evaluation, GEPA | Generation + execution | Nothing |
 
-## Quick Start: StepAgent (GRPO Training)
+## Quick Start: StepAgent (Online RL Training)
 
 Implement `reset`, `step`, `close`, and a `tools` property:
 
@@ -15,7 +15,7 @@ Implement `reset`, `step`, `close`, and a `tools` property:
 from trajgym.agent.protocol import StepAgent, StepResult, validate_step_agent
 
 class MyStepAgent:
-    """Minimal StepAgent for GRPO training."""
+    """Minimal StepAgent for Online RL training."""
 
     def reset(self, target="", ground_truth_flag="", max_steps=30, **kwargs):
         self.target = target

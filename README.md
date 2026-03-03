@@ -1,7 +1,3 @@
-<div align="center">
-  <img src="docs/assets/logo_arcade.png" alt="Open Trajectory Gym" width="500" />
-</div>
-
 # Open Trajectory Gym
 
 [![Version](https://img.shields.io/badge/version-0.1.0-blue)](https://github.com/westonbrown/open-trajectory-gym)
@@ -9,16 +5,20 @@
 [![License](https://img.shields.io/badge/license-MIT-green)](./LICENSE)
 [![Status](https://img.shields.io/badge/status-experimental-orange)](https://github.com/westonbrown/open-trajectory-gym)
 
-An open-source platform for **post-training LLMs on multi-turn tool-use trajectories**. Bring your own agent, model, benchmark, and reward function -- then run SFT + online GRPO + GEPA on any GPU infrastructure. Ships with [CyBench](https://cybench.github.io/) (40 CTF challenges) as the featured benchmark and [BoxPwnr](https://github.com/0ca/BoxPwnr) as the reference agent.
+An open-source platform for **post-training LLMs on multi-turn tool-use trajectories**. Bring your own agent, model, benchmark, and reward function -- then run SFT + Online RL + GEPA on any GPU infrastructure. Ships with [CyBench](https://cybench.github.io/) (40 CTF challenges) as the featured benchmark and [BoxPwnr](https://github.com/0ca/BoxPwnr) as the reference agent.
 
 > **Note:** This project is experimental and in active development. APIs, configs, and training protocols may change between releases.
 
 > Presented at **[un]prompted -- The AI Security Practitioner Conference**
 > March 3-4, 2026 | Salesforce Tower, San Francisco
 
+<div align="center">
+  <img src="docs/assets/logo_arcade.png" alt="Open Trajectory Gym Logo" width="500" />
+</div>
+
 ## Thesis
 
-Base open-weight models can reason about complex tasks but fail to execute multi-step tool-use sequences reliably. We investigate whether **trajectory-aware post-training** -- SFT on expert traces, then online GRPO with live tool execution -- can close this plan-execute gap. The platform is domain-agnostic: any task where an agent interacts with tools over multiple turns (security, SWE, data analysis, system administration) can be plugged in via YAML configs and adapter protocols. Our featured example trains a locally deployable CTF agent from [Qwen3.5-27B](https://huggingface.co/Qwen/Qwen3.5-27B).
+Base open-weight models can reason about complex tasks but fail to execute multi-step tool-use sequences reliably. We investigate whether **trajectory-aware post-training** -- SFT on expert traces, then Online RL with live tool execution -- can close this plan-execute gap. The platform is domain-agnostic: any task where an agent interacts with tools over multiple turns (security, SWE, data analysis, system administration) can be plugged in via YAML configs and adapter protocols. Our featured example trains a locally deployable CTF agent from [Qwen3.5-27B](https://huggingface.co/Qwen/Qwen3.5-27B).
 
 ## How It Works
 
@@ -29,11 +29,11 @@ flowchart LR
     end
 
     subgraph convert["2) Convert"]
-        Converter[["TraceConverter"]] --> Data[("SFT + GRPO<br/>Datasets")]
+        Converter[["TraceConverter"]] --> Data[("SFT + Online RL<br/>Datasets")]
     end
 
     subgraph train["3) Train"]
-        SFT("SFT") --> GRPO("Online GRPO") --> GEPA("GEPA")
+        SFT("SFT") --> Online_RL("Online RL") --> GEPA("GEPA")
     end
 
     subgraph deploy["4) Deploy"]
@@ -50,10 +50,10 @@ The only variable across stages is the model weights -- agent protocol, tools, a
 | Stage | Framework | What It Does | Weight Updates |
 |-------|-----------|--------------|----------------|
 | **1. SFT** | [TRL](https://github.com/huggingface/trl) | Supervised fine-tuning on expert traces (LoRA). TRL backend provides native tokenizer formats and high-capacity processing. | Yes |
-| **2. GRPO** | [SkyRL](https://github.com/westonbrown/SkyRL/tree/open-ctf/v0.3.1-patched) | Online reinforcement learning with live tool execution via ToolExecutor. Async Ray-based, vLLM inference, DAPO sampling. | Yes |
-| **3. GEPA** | [DSPy](https://github.com/stanfordnlp/dspy) | Prompt evolution via reflection -- no weight updates. Pareto-based candidate selection. Outperforms GRPO by ~6% with 4-35x fewer rollouts. | No |
+| **2. Online RL** | [SkyRL](https://github.com/westonbrown/SkyRL/tree/open-ctf/v0.3.1-patched) | Online reinforcement learning with live tool execution via ToolExecutor. Async Ray-based, vLLM inference, RLOO advantage estimation, DAPO sampling. | Yes |
+| **3. GEPA** | [DSPy](https://github.com/stanfordnlp/dspy) | Prompt evolution via reflection -- no weight updates. Pareto-based candidate selection. Outperforms Online RL by ~6% with 4-35x fewer rollouts. | No |
 
-> **Why a SkyRL fork?** Upstream SkyRL 0.3.1 has compatibility gaps with vLLM 0.16, Ray 2.54, and FSDP2 that cause silent training failures (zero loss masks, NCCL deadlocks, truncated tool calls). Our [fork](https://github.com/westonbrown/SkyRL/tree/open-ctf/v0.3.1-patched) bakes in 20 targeted fixes so GRPO works out of the box on modern GPU stacks without runtime monkey-patching.
+> **Why a SkyRL fork?** Upstream SkyRL 0.3.1 has compatibility gaps with vLLM 0.16, Ray 2.54, and FSDP2 that cause silent training failures (zero loss masks, NCCL deadlocks, truncated tool calls). Our [fork](https://github.com/westonbrown/SkyRL/tree/open-ctf/v0.3.1-patched) bakes in 20 targeted fixes so Online RL works out of the box on modern GPU stacks without runtime monkey-patching.
 
 ## Baseline Results (Featured Example: CyBench CTF)
 
@@ -61,14 +61,14 @@ Qwen3.5-27B evaluated on [CyBench](https://cybench.github.io/) 40-challenge suit
 
 | Model | CyBench Solve Rate | Avg Turns (solved) | Avg Time (solved) | Notes |
 |-------|-------------------|-------------------|-------------------|-------|
-| Qwen3.5-27B (base) | **6/40 (15.0%)** | 9.3 | 7m 41s | No fine-tuning |
-| + SFT | **8/40 (20.0%)** | 12.1 | 5m 28s | +2 challenges after SFT on expert traces |
-| + SFT + GRPO | In progress | — | — | Online RL with live tool execution |
+| Qwen3.5-27B (base) | **5/40 (12.5%)** | 9.3 | 7m 41s | No fine-tuning |
+| + SFT | **10/40 (25.0%)** | 12.1 | 5m 28s | +5 challenges after SFT on expert traces |
+| + SFT + Online RL | In progress | — | — | Online RL with live tool execution |
 
 ### Key Observations
 
 - **SFT unlocks expert-level challenges.** SFT solves shuffled-aes (Expert crypto) and MissingBits (Expert crypto) — challenges the base model cannot solve. SFT teaches systematic attack workflows (source audit → oracle interaction → automated solver) from expert traces.
-- **SFT's structural value enables GRPO.** Beyond solve rate (6/40 → 8/40), SFT teaches consistent tool-call format needed for online GRPO training. Without format compliance, GRPO rollouts fail to parse. During online GRPO, the SFT model solved challenges like Flag Command 3/4 times — the variance between successes and failures is exactly the signal GRPO needs for policy gradient updates.
+- **SFT's structural value enables Online RL.** Beyond solve rate (5/40 → 10/40), SFT teaches consistent tool-call format needed for online RL training. Without format compliance, RL rollouts fail to parse. During Online RL, the SFT model solved challenges like Flag Command 3/4 times — the variance between successes and failures is exactly the signal RLOO needs for policy gradient updates.
 - **16K context limit caused 19/32 docker challenge failures** in SFT eval. Model runs out of context during multi-step exploitation chains.
 - **Difficulty cliff at Medium.** Very Easy challenges are reliably solved; Medium+ requires multi-step reasoning the base model lacks.
 
@@ -122,8 +122,8 @@ The SFT model learned the full expert workflow from training traces: source code
 git clone https://github.com/westonbrown/open-trajectory-gym.git
 cd open-trajectory-gym
 
-# Install core + SFT + GRPO deps
-uv sync --extra grpo --extra sft --extra dev
+# Install core + SFT + Online RL deps
+uv sync --extra online-rl --extra sft --extra dev
 
 # Install SkyRL from patched fork + apply compatibility patches
 git clone -b open-ctf/v0.3.1-patched https://github.com/westonbrown/SkyRL.git skyrl
@@ -133,7 +133,7 @@ uv pip install -e skyrl/skyrl-train --no-deps
 bash docker/patches/apply_all_patches.sh
 ```
 
-Or use `pip install -e ".[sft,grpo]"` — see [quickstart](docs/quickstart.md) for pip-specific steps. For containerized deployment, see [Docker Setup](#docker-setup).
+Or use `pip install -e ".[sft,online-rl]"` — see [quickstart](docs/quickstart.md) for pip-specific steps. For containerized deployment, see [Docker Setup](#docker-setup).
 
 ### Train
 
@@ -151,10 +151,10 @@ trajgym-train merge \
     --base-model Qwen/Qwen3.5-27B \
     --output outputs/sft-qwen35-merged
 
-# Stage 2: GRPO via SkyRL
+# Stage 2: Online RL (RLOO/DAPO) via SkyRL
 trajgym-train rl \
     --model outputs/sft-qwen35-merged \
-    --data data/online_rl_cybench40.jsonl \
+    --data data/online_rl.jsonl \
     --output outputs/online_rl-qwen35 \
     --config examples/qwen35-27b/training.yaml \
     --challenge-registry configs/challenges/cybench.yaml
@@ -163,10 +163,10 @@ trajgym-train rl \
 ### Evaluate
 
 ```bash
-trajgym-eval \
+trajgym-eval run \
     --model outputs/online_rl/final \
-    --baseline Qwen/Qwen3.5-27B \
-    --challenges cybench
+    --challenges configs/challenges/cybench.yaml \
+    --output outputs/eval
 ```
 
 ### Deploy
@@ -191,9 +191,9 @@ Swap any component without touching the rest:
 
 | Extension | How | Guide |
 |-----------|-----|-------|
-| **Agent** | Implement `StepAgent` (GRPO) or `Agent` (eval/GEPA). Native adapter mode shells out to any external process via `TRAJGYM_AGENT_CMD`. | [`examples/bring-your-own/agent/`](examples/bring-your-own/agent/) |
+| **Agent** | Implement `StepAgent` (Online RL) or `Agent` (eval/GEPA). Native adapter mode shells out to any external process via `TRAJGYM_AGENT_CMD`. | [`examples/bring-your-own/agent/`](examples/bring-your-own/agent/) |
 | **Model** | Create `examples/<model>/training.yaml`. Optional custom formatter in `src/trajgym/formatters/`. | [`examples/bring-your-own/model/`](examples/bring-your-own/model/) |
-| **Benchmark** | Add YAML entries to `configs/challenges/` (docker or static). | [`examples/bring-your-own/benchmark/`](examples/bring-your-own/benchmark/) |
+| **Benchmark** | Define tasks in a YAML challenge registry (docker services or static files). Any domain — CTF, SWE, sysadmin, data analysis. | [`examples/bring-your-own/benchmark/`](examples/bring-your-own/benchmark/) |
 | **Reward** | Configure weights via YAML, or replace entirely with any `__call__(completions, **kwargs) -> list[float]`. | [`docs/architecture.md`](docs/architecture.md#ctf-reward-function) |
 
 Included model configs: Qwen3.5-27B, Qwen3.5-9B, Qwen3.5-4B, Devstral-24B. See [`examples/`](examples/) for all configs.
@@ -204,45 +204,40 @@ Included model configs: Qwen3.5-27B, Qwen3.5-9B, Qwen3.5-4B, Devstral-24B. See [
 |---------|---------|
 | `trajgym-train sft` | Stage 1: SFT via TRL |
 | `trajgym-train merge` | Merge LoRA adapter into base model |
-| `trajgym-train rl` | Stage 2: Online GRPO via SkyRL |
+| `trajgym-train rl` | Stage 2: Online RL (RLOO/DAPO) via SkyRL |
 | `trajgym-train gepa` | Stage 3: GEPA prompt optimization (no weight updates) |
-| `trajgym-convert` | Convert BoxPwnr traces to training format |
-| `trajgym-split` | Split datasets into SFT and GRPO sets |
+| `trajgym-convert` | Convert agent traces to training format |
+| `trajgym-split` | Split datasets into SFT and Online RL sets |
+| `trajgym-generate-rl` | Generate Online RL dataset from challenge registry |
+| `trajgym-agent` | Run agent against benchmark challenges |
 | `trajgym-challenges` | Manage challenge containers (setup / status / teardown) |
-| `trajgym-eval` | Evaluate and compare models on CyBench |
+| `trajgym-eval` | Evaluate and compare models |
 | `trajgym-validate` | Validate pipeline without GPU |
 | `trajgym-export` | Export LoRA adapter to GGUF |
 | `trajgym-synthetic-data` | High-throughput offline data generator |
-
-## Roadmap
-
-- [x] Full pipeline: trace converter, SFT (TRL), online GRPO (SkyRL), GEPA (DSPy), GGUF export
-- [x] CyBench 40-challenge benchmark runner + 8-signal reward function
-- [x] Qwen3.5-27B baseline: 6/40 base, 8/40 SFT
-- [ ] Online GRPO training (live tool execution, DAPO)
-- [ ] GEPA prompt optimization
-- [ ] Full eval comparison: base vs SFT vs GRPO vs GEPA
-- [ ] v1.0.0 release + HuggingFace weights
 
 ## Docker Setup
 
 ```bash
 # Build
 docker build -t trajgym:sft  --target sft  -f docker/Dockerfile .
-docker build -t trajgym:grpo --target grpo -f docker/Dockerfile .
+docker build -t trajgym:online_rl --target online_rl -f docker/Dockerfile .
 
 # Run
 MODEL=Qwen/Qwen3.5-27B docker compose run --rm sft
 docker compose run --rm merge
-docker compose run --rm grpo
+docker compose run --rm online_rl
 ```
 
-The GRPO stage includes 20 compatibility patches for SkyRL + vLLM + Ray, applied automatically during build. See [`docker-compose.yaml`](docker-compose.yaml) for all services.
+The Online RL stage includes 20 compatibility patches for SkyRL + vLLM + Ray, applied automatically during build. See [`docker-compose.yaml`](docker-compose.yaml) for all services.
 
 ## Acknowledgements
 
-- **[SkyRL](https://github.com/NovaSky-AI/SkyRL)** -- Online GRPO backbone ([patched fork](https://github.com/westonbrown/SkyRL/tree/open-ctf/v0.3.1-patched))
+Open Trajectory Gym builds heavily on the foundational work of some incredibly powerful open-source solutions, especially the distributed scaling capabilities of **SkyRL**, the robust model integrations of **TRL**, and the reasoning execution insights from the **OpenThoughts Agent** project. 
+
+- **[SkyRL](https://github.com/NovaSky-AI/SkyRL)** -- Online RL (RLOO/DAPO) backbone ([patched fork](https://github.com/westonbrown/SkyRL/tree/open-ctf/v0.3.1-patched))
 - **[TRL](https://github.com/huggingface/trl)** -- SFT stage
+- **[OpenThoughts Agent](https://github.com/OpenThoughts-Group/OpenThoughts-Agent)** -- Inspiration for scalable RL inference execution and dataset curation
 - **[vLLM](https://github.com/vllm-project/vllm)** -- Inference engine for generation + serving
 - **[BoxPwnr](https://github.com/0ca/BoxPwnr)** -- Reference agent and trace source ([@0ca](https://github.com/0ca))
 - **[CyBench](https://cybench.github.io/)** -- Featured benchmark ([paper](https://arxiv.org/abs/2408.08926), ICLR 2025 Oral)

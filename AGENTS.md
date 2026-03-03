@@ -4,7 +4,7 @@ Context for AI coding agents reviewing or contributing to this repository.
 
 ## What This Project Is
 
-Open Trajectory Gym is a platform for post-training LLMs on multi-turn tool-use trajectories. It provides a 3-stage pipeline (SFT → online GRPO → GEPA) with pluggable agents, models, benchmarks, and reward functions. The featured example trains a CTF security agent on CyBench challenges.
+Open Trajectory Gym is a platform for post-training LLMs on multi-turn tool-use trajectories. It provides a 3-stage pipeline (SFT → online ONLINE_RL → GEPA) with pluggable agents, models, benchmarks, and reward functions. The featured example trains a CTF security agent on CyBench challenges.
 
 ## Architecture
 
@@ -16,7 +16,7 @@ src/trajgym/
 ├── envs/            # ToolExecutor (13 tools, subprocess-based) + SkyRL env bridge
 ├── formatters/      # Per-model chat template formatters (Qwen3, GLM4, Devstral)
 ├── rewards/         # Reward function (8 signals + hallucination penalty)
-├── training/        # SFT (TRL), online GRPO (SkyRL), GEPA (DSPy)
+├── training/        # SFT (TRL), online ONLINE_RL (SkyRL), GEPA (DSPy)
 └── parsing/         # Tool call parsers (5 formats: Hermes, Qwen XML, bare JSON, etc.)
 ```
 
@@ -44,7 +44,7 @@ src/trajgym/
 |------|---------|
 | `src/trajgym/agent/protocol.py` | Agent contracts (StepAgent, Agent, StepResult, AgentResult) |
 | `src/trajgym/envs/skyrl/trajgym_env.py` | SkyRL environment bridge |
-| `src/trajgym/training/online_rl/runtime.py` | GRPO orchestration (~2500 lines, largest file) |
+| `src/trajgym/training/online_rl/runtime.py` | ONLINE_RL orchestration (~2500 lines, largest file) |
 | `src/trajgym/rewards/reward.py` | 8-signal reward function |
 | `src/trajgym/envs/tool_executor.py` | Subprocess-based tool execution (13 tools) |
 | `src/trajgym/parsing/tool_calls.py` | Multi-format tool call parser |
@@ -54,7 +54,7 @@ src/trajgym/
 ## Conventions
 
 - Training configs live in `examples/<model>/training.yaml` (per-model)
-- GRPO base templates live in `src/trajgym/training/grpo_templates/<model>.yaml`
+- ONLINE_RL base templates live in `src/trajgym/training/online_rl_templates/<model>.yaml`
 - Challenge registries are YAML files in `configs/challenges/`
 - Adapter examples live in `examples/bring-your-own/agent/`
 - The SkyRL fork branch is `open-ctf/v0.3.1-patched` (this is a git branch name, not a typo)

@@ -1,6 +1,6 @@
 # Training Guide
 
-Open Trajectory Gym uses a **3-stage training pipeline**: SFT (supervised fine-tuning) for knowledge acquisition, online GRPO (reinforcement learning with live tool execution) for efficiency optimization, and GEPA (prompt evolution) for no-weight-update refinement.
+Open Trajectory Gym uses a **3-stage training pipeline**: SFT (supervised fine-tuning) for knowledge acquisition, online RL (reinforcement learning with live tool execution) for efficiency optimization, and GEPA (prompt evolution) for no-weight-update refinement.
 
 ## Pipeline Overview
 
@@ -9,16 +9,16 @@ flowchart LR
     %% Data Flow
     Traces[/"Agent Traces"/] --> Convert[["Convert & Split"]]
     Convert -->|"Successes"| SFTData[("SFT Data")]
-    Convert -->|"All + Flags"| GRPOData[("GRPO Data")]
+    Convert -->|"All + Flags"| RLData[("Online RL Data")]
 
     %% Train
     SFTData --> SFT("SFT Stage<br/>(TRL)")
     SFT -.->|"LoRA"| Merge[["PEFT Merge"]]
-    Merge --> GRPO("GRPO Stage<br/>(SkyRL)")
-    GRPOData --> GRPO
+    Merge --> Online RL("Online RL Stage<br/>(SkyRL)")
+    RLData --> Online RL
     
     %% Post-train
-    GRPO --> GEPA("GEPA Stage<br/>(DSPy)")
+    Online RL --> GEPA("GEPA Stage<br/>(DSPy)")
     GEPA --> Final(("Final Model"))
 ```
 
@@ -26,9 +26,9 @@ flowchart LR
 
 ```mermaid
 flowchart LR
-    D[("Datasets<br/>(SFT + GRPO)")] --> S("Stage 1: SFT<br/>(LoRA)")
+    D[("Datasets<br/>(SFT + Online RL)")] --> S("Stage 1: SFT<br/>(LoRA)")
     S --> M[["Merge Weights"]]
-    M --> G("Stage 2: GRPO<br/>(Tools + Reward)")
+    M --> G("Stage 2: Online RL<br/>(Tools + Reward)")
     G --> P("Stage 3: GEPA<br/>(Prompt Optimize)")
     P --> F(("Deployable Model"))
 ```
@@ -36,8 +36,8 @@ flowchart LR
 | Stage | Framework | What It Does | Weight Updates |
 |-------|-----------|--------------|----------------|
 | **1. SFT** | [TRL](https://github.com/huggingface/trl) | YAML-driven TRL SFT backend for extensive model support (including Qwen3.5). | Yes |
-| **2. GRPO** | [SkyRL](https://github.com/westonbrown/SkyRL/tree/open-ctf/v0.3.1-patched) | Online RL with live tool execution via ToolExecutor (subprocess). Ray-based, vLLM, DAPO. | Yes |
-| **3. GEPA** | [DSPy](https://github.com/stanfordnlp/dspy) | Prompt evolution via reflection. Pareto-based candidate selection. ~6% better than GRPO with 4-35x fewer rollouts. | No |
+| **2. Online RL** | [SkyRL](https://github.com/westonbrown/SkyRL/tree/open-ctf/v0.3.1-patched) | Online RL with live tool execution via ToolExecutor (subprocess). Ray-based, vLLM, DAPO. | Yes |
+| **3. GEPA** | [DSPy](https://github.com/stanfordnlp/dspy) | Prompt evolution via reflection. Pareto-based candidate selection. ~6% better than Online RL with 4-35x fewer rollouts. | No |
 
 ## Data Preparation
 
@@ -52,14 +52,14 @@ trajgym-convert \
     --output data/sft_train.jsonl \
     --success-only --dedup
 
-# Also save failures (useful for GRPO exploration)
+# Also save failures (useful for Online RL exploration)
 trajgym-convert \
     --input targets/ \
     --output data/sft_train.jsonl \
     --output-failure data/failures.jsonl
 ```
 
-### 2. Split into SFT and GRPO Datasets
+### 2. Split into SFT and Online RL Datasets
 
 ```bash
 trajgym-split \
@@ -85,7 +85,7 @@ trajgym-split \
 }
 ```
 
-**GRPO** adds ground truth for reward computation:
+**Online RL** adds ground truth for reward computation:
 
 ```json
 {
@@ -103,7 +103,7 @@ SFT uses the **TRL backend** to teach domain knowledge, tool schemas, and reason
 
 ```bash
 trajgym-train sft \
-    --model Nanbeige/Nanbeige4.1-3B \
+    --model Qwen/Qwen3.5-4B \
     --data data/sft.jsonl \
     --output outputs/sft
 
@@ -168,30 +168,24 @@ sft:
 | `sft.flash_attn` | true | Falls back to SDPA if flash_attn not available |
 | `sft.gradient_checkpointing` | true | Required for long-context training |
 
-### MoE Model Notes (GLM-4.7-Flash)
-
-- **No 4-bit quantization**: MoE expert tensors are incompatible with BitsAndBytes. Use BF16 LoRA (`quantization_bit` omitted).
-- **batch_size=1**: Padding tokens through MoE router produce NaN gradients. Compensate with `gradient_accumulation_steps: 16`.
-- **Router layers excluded**: Only attention + FFN shared layers targeted by LoRA.
-
 ### Multi-GPU SFT
 
-For models that exceed single-GPU memory (e.g., Qwen3.5-27B at 49K context), use the dual-GPU SFT script:
+For models that exceed single-GPU memory (e.g., Qwen3.5-27B at 49K context), use multi-GPU SFT with `device_map=balanced`:
 
 ```bash
-CUDA_VISIBLE_DEVICES=0,1 python3 scripts/run_sft_qwen35_dual_b200.py \
-    --model /workspace/models/qwen35-27b-fp8 \
+CUDA_VISIBLE_DEVICES=0,1 trajgym-train sft \
+    --model Qwen/Qwen3.5-27B \
     --data data/sft.jsonl \
-    --output /workspace/outputs/sft_qwen35_27b \
+    --output outputs/sft-qwen35 \
+    --config examples/qwen35-27b/training.yaml \
     --packing
 ```
 
-This script shards the base model across both GPUs via `device_map=balanced` and applies a global Liger fused cross-entropy patch to avoid the 45.5 GiB logits OOM at 49K context x 248K vocab. Key differences from the standard `trajgym-train sft` path:
+Key considerations for multi-GPU SFT:
 
-- `device_map=balanced` for multi-GPU sharding
+- `device_map=balanced` shards the base model across GPUs
 - `completion_only_loss=True` (TRL 0.29+ native assistant-only masking)
-- Liger kernel global CE monkey-patch for unsupported model types
-- TensorBoard logging by default
+- For very large vocab models (248K+), consider a fused cross-entropy kernel (e.g., Liger) to avoid logits OOM
 
 ### Alternative SFT Data Sources
 
@@ -199,22 +193,22 @@ In addition to agent trace conversion, SFT data can be generated synthetically u
 
 ## Merging LoRA Adapters
 
-After SFT, merge the LoRA adapter into the base model for GRPO:
+After SFT, merge the LoRA adapter into the base model for Online RL:
 
 ```bash
 trajgym-train merge \
     --adapter outputs/sft \
-    --base-model Nanbeige/Nanbeige4.1-3B \
+    --base-model Qwen/Qwen3.5-4B \
     --output outputs/sft-merged
 ```
 
-## Stage 2: Online GRPO (Reinforcement Learning)
+## Stage 2: Online RL (RLOO/DAPO) (Reinforcement Learning)
 
-GRPO uses **SkyRL** to optimize for flag capture efficiency with live tool execution via the **ToolExecutor** (direct subprocess). The model generates tool calls, the ToolExecutor runs them locally (shell, Python, file ops), and the CTF reward function scores the full trajectory. No HTTP server required — SkyRL's per-worker process isolation handles everything.
+Online RL uses **SkyRL** to optimize for flag capture efficiency with live tool execution via the **ToolExecutor** (direct subprocess). The model generates tool calls, the ToolExecutor runs them locally (shell, Python, file ops), and the CTF reward function scores the full trajectory. No HTTP server required — SkyRL's per-worker process isolation handles everything.
 
 ### Prerequisites
 
-1. **Merged SFT model**: GRPO starts from the SFT checkpoint.
+1. **Merged SFT model**: Online RL starts from the SFT checkpoint.
 2. **CyBench challenge containers** (optional): For live challenge execution (`trajgym-challenges setup`).
 
 ### Quick Start
@@ -222,7 +216,7 @@ GRPO uses **SkyRL** to optimize for flag capture efficiency with live tool execu
 ```bash
 trajgym-train rl \
     --model outputs/sft-qwen35-merged \
-    --data data/online_rl_cybench40.jsonl \
+    --data data/online_rl.jsonl \
     --output outputs/online_rl-qwen35 \
     --config examples/qwen35-27b/training.yaml \
     --challenge-registry configs/challenges/cybench.yaml
@@ -230,7 +224,7 @@ trajgym-train rl \
 
 `trajgym-train rl` now runs `trajgym-validate --mode online-rl-preflight` automatically and requires `<data>.manifest.json` by default. Use `--allow-missing-manifest` only for ad-hoc debugging.
 
-For remote challenge infrastructure (for example challenge containers on one host tunneled to a remote GPU instance), generate a live challenge target map on the challenge host and pass it to GRPO:
+For remote challenge infrastructure (for example challenge containers on one host tunneled to a remote GPU instance), generate a live challenge target map on the challenge host and pass it to Online RL:
 
 ```bash
 # On the host running challenge containers
@@ -244,7 +238,7 @@ PYTHONPATH=src python3 src/trajgym/cli/generate_target_map.py \
 TRAJGYM_TARGET_MAP_PATH=/tmp/cybench_targets.json \
 trajgym-train rl \
     --model outputs/sft-qwen35-merged \
-    --data data/online_rl_cybench40.jsonl \
+    --data data/online_rl.jsonl \
     --output outputs/online_rl-qwen35 \
     --config examples/qwen35-27b/training.yaml \
     --challenge-registry configs/challenges/cybench.yaml
@@ -252,7 +246,7 @@ trajgym-train rl \
 
 ### Configuration
 
-The GRPO launch profiles in this repo are the `examples/*/training.yaml` files:
+The Online RL launch profiles in this repo are the `examples/*/training.yaml` files:
 
 | Model | Config | Placement | Notes |
 |-------|--------|-----------|-------|
@@ -279,23 +273,17 @@ environment:
 
 ### Reward Function
 
-The CTF reward scores completions on **8 signals + 1 penalty**:
+The reward function scores completions with a flag-dominant configuration designed for stable RLOO gradients:
 
 | Signal | Weight | Description |
 |--------|--------|-------------|
-| **Flag Capture** | 0.40 | Exact match (1.0) or pattern match (0.1) |
-| **Efficiency** | 0.15 | `min(optimal / actual, 1.0)` |
-| **Format** | 0.10 | Valid tool call structure and schema compliance |
-| **Recovery** | 0.09 | Recovery after failed commands |
-| **Progression** | 0.08 | RECON → ENUM → EXPLOIT phase ordering |
-| **Cognitive** | 0.08 | Coherent reasoning/execution progression |
-| **Exploration** | 0.05 | Novel tool usage weighted toward early trajectory |
-| **Uniqueness** | 0.05 | Command diversity (detects stuck loops) |
-| **Hallucination** | -0.20 | Penalty for `flag_found` calls with wrong flag (decayed by similarity) |
+| **Flag Capture** | 0.85 | Exact match (1.0), pattern match (0.1), env-verified (1.0) |
+| **Efficiency** | 0.10 | Physics-inspired: `step_ratio × action_novelty × temporal_decay` |
+| **Format** | 0.05 | Valid tool call structure and schema compliance |
 
-All process signals are ungated -- they provide gradient signal regardless of flag capture.
+Additional signals (progression, recovery, cognitive, exploration, uniqueness, hallucination) exist in the reward system but are zeroed for early training. They can be reactivated via config weights once flag capture rate exceeds 10% on hard challenges. See [architecture.md](architecture.md#reward-function) for the full 8-signal system.
 
-### GRPO Key Parameters
+### Online RL Key Parameters
 
 | Parameter | Recommended | Notes |
 |-----------|-------------|-------|
@@ -309,7 +297,7 @@ All process signals are ungated -- they provide gradient signal regardless of fl
 
 ### SkyRL Architecture
 
-SkyRL uses Ray actors for fully async GRPO:
+SkyRL uses Ray actors for fully async Online RL:
 
 - **Generator**: vLLM inference engine produces completions in a separate process.
 - **Trainer**: FSDP2 handles distributed training with gradient checkpointing.
@@ -379,7 +367,7 @@ When `--agent` is set, GEPA wraps the Agent in a `AgentDSPyAdapter` so the DSPy 
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--model` | (required) | LLM model id for `dspy.LM` (local vLLM recommended) |
-| `--data` | (required) | Path to GRPO JSONL data (challenges) |
+| `--data` | (required) | Path to Online RL JSONL data (challenges) |
 | `--output` | (required) | Output directory for optimized prompt |
 | `--reflection-model` | same as `--model` | LLM for reflection. For stronger mutations, use a larger local model. |
 | `--budget` | `medium` | Budget preset: `light`, `medium`, or `heavy` |
@@ -426,7 +414,7 @@ gepa:
   reflection_model: "openai/my-27b-model"  # points to port 8002
 ```
 
-GEPA can run in offline mode (stub tools, scores structure) or online mode (real tools, scores flag capture). Online mode uses the same ToolExecutor as GRPO.
+GEPA can run in offline mode (stub tools, scores structure) or online mode (real tools, scores flag capture). Online mode uses the same ToolExecutor as Online RL.
 
 ## Full Pipeline
 
@@ -436,12 +424,12 @@ trajgym-convert --input targets/ --output data/all.jsonl --dedup
 trajgym-split --input data/all.jsonl
 
 # 2. SFT
-trajgym-train sft --model Nanbeige/Nanbeige4.1-3B --data data/sft.jsonl --output outputs/sft
+trajgym-train sft --model Qwen/Qwen3.5-4B --data data/sft.jsonl --output outputs/sft
 
 # 3. Merge
-trajgym-train merge --adapter outputs/sft --base-model Nanbeige/Nanbeige4.1-3B --output outputs/sft-merged
+trajgym-train merge --adapter outputs/sft --base-model Qwen/Qwen3.5-4B --output outputs/sft-merged
 
-# 4. GRPO
+# 4. Online RL
 trajgym-train rl --model outputs/sft-merged --data data/online_rl.jsonl --output outputs/online_rl \
     --config examples/qwen35-27b/training.yaml
 
@@ -449,7 +437,7 @@ trajgym-train rl --model outputs/sft-merged --data data/online_rl.jsonl --output
 trajgym-train gepa --model openai/ctf-agent --data data/online_rl.jsonl --output outputs/gepa
 
 # 6. Export
-trajgym-export --adapter outputs/online_rl/final --base-model Nanbeige/Nanbeige4.1-3B --output models/ctf-agent.gguf --quant Q4_K_M
+trajgym-export --adapter outputs/online_rl/final --base-model Qwen/Qwen3.5-4B --output models/ctf-agent.gguf --quant Q4_K_M
 ```
 
 ## Docker Training
@@ -461,8 +449,8 @@ docker compose run --rm sft
 # Merge LoRA
 docker compose run --rm merge
 
-# Stage 2: GRPO (SkyRL image, needs TRAJGYM_ENV_URL)
-docker compose run --rm grpo
+# Stage 2: Online RL (SkyRL image)
+docker compose run --rm online_rl
 
 # Validate
 docker compose run --rm validate
@@ -481,8 +469,8 @@ output:
 
 | Stage | Model | Minimum GPU | Recommended |
 |-------|-------|-------------|-------------|
-| SFT | Nanbeige4.1-3B (QLoRA 4-bit) | 1x 24GB | 1x 80GB |
-| SFT | GLM-4.7-Flash (BF16 LoRA) | 1x 80GB | 1x 128GB+ GPU |
-| GRPO | Nanbeige4.1-3B | 1x 128GB+ GPU | 1x H200 (141GB) |
-| GRPO | GLM-4.7-Flash | 1x 128GB+ GPU | 1x B200 (192GB) |
+| SFT | Qwen3.5-4B (BF16 LoRA) | 1x 24GB | 1x 80GB |
+| SFT | Qwen3.5-27B (BF16 LoRA) | 2x 80GB | 2x 140GB |
+| Online RL | Qwen3.5-4B | 1x 128GB+ GPU | 1x H200 (141GB) |
+| Online RL | Qwen3.5-27B | 2x 140GB+ GPU | 2x H200/B200 |
 | GEPA | Any | No GPU required | — |

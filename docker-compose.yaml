@@ -1,12 +1,12 @@
 # Open Trajectory Gym - Docker Compose
 #
 # Single Dockerfile with multi-stage build targets:
-#   docker/Dockerfile → targets: base, sft, grpo
+#   docker/Dockerfile → targets: base, sft, online RL
 #
 # Usage:
 #   docker compose run --rm sft        # Stage 1: SFT (TRL)
 #   docker compose run --rm merge      # Merge LoRA adapter
-#   docker compose run --rm grpo       # Stage 2: GRPO (SkyRL)
+#   docker compose run --rm online_rl       # Stage 2: Online RL (SkyRL)
 #   docker compose run --rm validate   # Validate pipeline
 #   docker compose run --rm export     # Export to GGUF
 #
@@ -58,23 +58,23 @@ services:
     command: >
       trajgym-train merge
         --adapter ${ADAPTER:-/workspace/outputs/sft}
-        --base-model ${MODEL:-Nanbeige/Nanbeige4.1-3B}
+        --base-model ${MODEL:-Qwen/Qwen3.5-27B}
         --output /workspace/outputs/sft-merged
     environment:
       - HF_TOKEN=${HF_TOKEN:-}
 
-  # Stage 2: GRPO via SkyRL (requires merged model)
-  grpo:
+  # Stage 2: Online RL via SkyRL (requires merged model)
+  online_rl:
     build:
       context: .
       dockerfile: docker/Dockerfile
-      target: grpo
+      target: online_rl
     <<: [*gpu, *volumes]
     command: >
-      trajgym-train grpo
+      trajgym-train rl
         --model ${GRPO_MODEL:-/workspace/outputs/sft-merged}
-        --data /workspace/data/${GRPO_DATA:-grpo_offline_683.jsonl}
-        --output /workspace/outputs/grpo
+        --data /workspace/data/${GRPO_DATA:-online_rl.jsonl}
+        --output /workspace/outputs/online_rl
     environment:
       - WANDB_API_KEY=${WANDB_API_KEY:-}
       - HF_TOKEN=${HF_TOKEN:-}
@@ -98,6 +98,6 @@ services:
     command: >
       trajgym-export
         --adapter ${ADAPTER:-/workspace/outputs/sft}
-        --base-model ${MODEL:-Nanbeige/Nanbeige4.1-3B}
+        --base-model ${MODEL:-Qwen/Qwen3.5-27B}
         --output /workspace/outputs/model.gguf
         --quant ${QUANT:-Q4_K_M}

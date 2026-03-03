@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
   "generated_at_utc": "2026-02-27T04:54:17.192828+00:00",
-  "generator": "scripts/generate_online_rl_from_registry.py",
-  "output_path": "data/online_rl_quality.jsonl",
+  "generator": "trajgym-generate-rl",
+  "output_path": "data/online_rl.jsonl",
   "output_sha256": "15924a7ef00664c48e69abbde2ef7ebb82e51c39f4aa1c763589f1b8406943fb",
   "sample_count": 9,
   "challenge_ids": [

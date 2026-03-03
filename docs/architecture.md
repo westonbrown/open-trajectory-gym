@@ -1,6 +1,6 @@
 # Architecture
 
-Open Trajectory Gym is a **3-stage post-training pipeline** for fine-tuning LLMs on CTF challenge trajectories using [TRL](https://github.com/huggingface/trl) (SFT), [SkyRL](https://github.com/westonbrown/SkyRL/tree/open-ctf/v0.3.1-patched) (online GRPO), and [GEPA](https://arxiv.org/abs/2507.19457) (prompt evolution).
+Open Trajectory Gym is a **3-stage post-training pipeline** for fine-tuning LLMs on CTF challenge trajectories using [TRL](https://github.com/huggingface/trl) (SFT), [SkyRL](https://github.com/westonbrown/SkyRL/tree/open-ctf/v0.3.1-patched) (online RL), and [GEPA](https://arxiv.org/abs/2507.19457) (prompt evolution).
 
 ## System Overview
 
@@ -12,11 +12,11 @@ flowchart TD
     Convert[["Converter & Splitter"]]
     
     SFTData[("SFT Dataset")]
-    GRPOData[("GRPO Dataset")]
+    RLData[("Online RL Dataset")]
     
     SFT("Stage 1: SFT (TRL)")
     Merge[["Merge LoRA"]]
-    GRPO("Stage 2: Online GRPO (SkyRL)")
+    Online RL("Stage 2: Online RL (RLOO/DAPO) (SkyRL)")
     GEPA("Stage 3: GEPA (DSPy)")
     
     Model(("Final CTF Agent"))
@@ -25,15 +25,15 @@ flowchart TD
     %% Data Flow
     Traces --> Convert
     Convert -->|"Successes"| SFTData
-    Convert -->|"All + Flags"| GRPOData
-    Synth -.-> SFTData & GRPOData
+    Convert -->|"All + Flags"| RLData
+    Synth -.-> SFTData & RLData
 
     %% Training Flow
     SFTData --> SFT
     SFT --> Merge
-    Merge --> GRPO
-    GRPOData --> GRPO
-    GRPO --> GEPA
+    Merge --> Online RL
+    RLData --> Online RL
+    Online RL --> GEPA
     
     %% Output
     GEPA --> Model
@@ -46,11 +46,10 @@ flowchart TD
 src/trajgym/
 ├── agent/
 │   ├── protocol.py              # StepAgent + Agent protocols, AgentResult, validate_step_agent
-│   ├── default_agent.py         # DefaultStepAgent — default GRPO tool parser + executor
+│   ├── default_agent.py         # DefaultStepAgent — default Online RL tool parser + executor
 │   ├── framework_runtime_bridge.py  # BYO adapter bridge (tool_calls + native mode)
 │   ├── wire_protocol.py         # JSON wire protocol v1.0 for BYO subprocess agents
-│   ├── rollout_status.py        # RolloutStatus enum (replaces stringly-typed values)
-│   └── README.md
+│   └── rollout_status.py        # RolloutStatus enum (replaces stringly-typed values)
 ├── integrations/
 │   ├── boxpwnr_adapter.py      # Agent adapter for BoxPwnr (optional, lazy-imported)
 │   └── boxpwnr_runner.py       # BoxPwnr Solver wrapper (optional, lazy-imported)
@@ -67,12 +66,12 @@ src/trajgym/
 │   └── export_gguf.py           # trajgym-export
 ├── data/
 │   ├── converter.py             # Agent trace → ChatML conversion (default: BoxPwnr format)
-│   └── splitter.py              # SFT/GRPO dataset splitting
+│   ├── preprocessor.py          # SFT data preprocessing (packing, truncation)
+│   └── splitter.py              # SFT/Online RL dataset splitting
 ├── envs/
 │   ├── tool_executor.py         # SubprocessExecutor + RemoteBatchExecutor
 │   └── skyrl/
-│       ├── trajgym_env.py       # TrajGymTextEnv (SkyRL BaseTextEnv subclass)
-│       └── tool_groups.py       # 13 tool schema definitions for SkyRL
+│       └── trajgym_env.py       # TrajGymTextEnv (SkyRL BaseTextEnv subclass)
 ├── synthetic_data_generation/   # Offline synthetic trace generation
 │   ├── manifest.py              # WorldManifest dataclass — loads YAML configs defining hosts, files, services, tool responses
 │   ├── executor.py              # SimulatedEnvironmentExecutor — mocks all 13 agent tools using manifest data
@@ -117,41 +116,49 @@ flowchart LR
     Splitter[["DatasetSplitter"]]
     
     SFT_DB[("sft.jsonl")]
-    GRPO_DB[("grpo_cybench40.jsonl")]
+    RL_DB[("online_rl.jsonl")]
 
     SFT("SFT Stage")
     Merge[["PEFT Merge"]]
-    GRPO("GRPO Stage")
+    Online RL("Online RL Stage")
     GEPA("GEPA Stage")
     Model(("Final Export"))
 
     %% Flow
     Traces --> Converter --> Splitter
     Splitter -- "Successes" --> SFT_DB
-    Splitter -- "All + Flags" --> GRPO_DB
-    Synth -.-> SFT_DB & GRPO_DB
+    Splitter -- "All + Flags" --> RL_DB
+    Synth -.-> SFT_DB & RL_DB
 
-    SFT_DB --> SFT --> Merge --> GRPO
-    GRPO_DB --> GRPO
-    GRPO --> GEPA --> Model
+    SFT_DB --> SFT --> Merge --> Online RL
+    RL_DB --> Online RL
+    Online RL --> GEPA --> Model
 ```
 
 ## CTF Reward Function
 
-The reward function (`src/trajgym/rewards/reward.py`) scores trajectories with **8 process signals + 1 penalty** (plus optional interaction-quality bonus). Process signals are ungated so training still gets useful gradient before first-flag success becomes common.
+The reward function (`src/trajgym/rewards/reward.py`) uses a flag-dominant configuration for stable RLOO gradient signal:
+
+### Active Signals
 
 | Signal | Weight | What It Measures |
 |--------|--------|------------------|
-| **Flag Capture** | 0.40 | Correct flag submission / terminal solve |
-| **Efficiency** | 0.15 | Steps vs `optimal_steps` target |
-| **Format Compliance** | 0.10 | Valid, parseable tool-call structure |
-| **Recovery** | 0.09 | Pivoting out of repeated/stuck action loops |
-| **Progression** | 0.08 | RECON → ENUM → EXPLOIT phase ordering |
-| **Cognitive** | 0.08 | Reasoning density (words per action band) |
-| **Exploration** | 0.05 | Early novelty in tool usage (decayed over time) |
-| **Uniqueness** | 0.05 | Non-redundant command/output information |
-| **Hallucination Penalty** | -0.20 | Wrong flag / fabricated-success behavior |
-| **Interaction Quality (bonus)** | 0.00 default | Optional additive signal for productive interactions |
+| **Flag Capture** | 0.85 | Correct flag submission / terminal solve |
+| **Efficiency** | 0.10 | Physics-inspired: `step_ratio × action_novelty × temporal_decay` |
+| **Format Compliance** | 0.05 | Valid, parseable tool-call structure |
+
+### Available but Zeroed (reactivate via config weights)
+
+| Signal | Why Zeroed |
+|--------|-----------|
+| Recovery | Correlated with flag capture (redundant signal) |
+| Progression | Correlated with flag capture (redundant signal) |
+| Cognitive | Rewards command loops (words-per-action metric) |
+| Exploration | Subsumed by efficiency's action_novelty component |
+| Uniqueness | Subsumed by efficiency's action_novelty component |
+| Hallucination | Caused false penalties on silent flag drops |
+
+All 8 signals exist in `reward.py` and can be reactivated by setting non-zero weights in the training config. Recommended to reintroduce process signals when flag capture rate exceeds 10% on hard challenges.
 
 ## Model Formatters
 
@@ -165,14 +172,14 @@ Each model family has a formatter that handles chat template differences:
 
 `ModelFormatter.from_model_id()` auto-detects the appropriate formatter from the model name.
 
-## Online RL Architecture (Stage 2: GRPO)
+## Online RL Architecture (Stage 2: Online RL)
 
 ### Why BaseTextEnv, Not SkyRL-Agent
 
 We deliberately use `skyrl-gym`'s low-level `BaseTextEnv` interface rather than the higher-level `skyrl-agent` framework (`AutoAgentRunner`, `ReActAgent`). The reasons:
 
 1. **13 CTF tools** don't exist in `skyrl-agent`'s `TOOL_REGISTRY` — wrapping our `SubprocessExecutor` inside their tool class hierarchy would add an unnecessary abstraction layer.
-2. **Token format parity**: Tool schemas in the GRPO system prompt must exactly match what the model saw during SFT (verified by `test_tokenizer_drift`). SkyRL-Agent's own prompt construction would break this.
+2. **Token format parity**: Tool schemas in the Online RL system prompt must exactly match what the model saw during SFT (verified by `test_tokenizer_drift`). SkyRL-Agent's own prompt construction would break this.
 3. **Multi-signal reward**: SkyRL-Agent's verifiers are binary pass/fail. Our `Reward` computes 8 continuous process signals.
 4. **Per-challenge routing**: CTF challenges require Docker container lifecycle management and per-challenge target URLs — not supported by SkyRL-Agent's task abstraction.
 
@@ -198,7 +205,7 @@ flowchart LR
 
 ### Execution Sequence
 
-To keep GRPO scalable, environments operate autonomously and execute commands directly as subprocesses, bypassing the HTTP bottleneck. The training iteration loops are securely coordinated between the model generators and physical containers.
+To keep Online RL scalable, environments operate autonomously and execute commands directly as subprocesses, bypassing the HTTP bottleneck. The training iteration loops are securely coordinated between the model generators and physical containers.
 
 ```mermaid
 sequenceDiagram
@@ -243,7 +250,7 @@ sequenceDiagram
 
 ```
 examples/<model>/training.yaml          ← TRL SFT (native YAML format)
-src/trajgym/training/grpo_templates/<model>.yaml ← SkyRL GRPO base template (native YAML format)
+src/trajgym/training/online_rl_templates/<model>.yaml ← SkyRL Online RL base template (native YAML format)
 configs/challenges/<benchmark>.yaml     ← Challenge registry (custom YAML)
 ```
 
@@ -251,7 +258,7 @@ TRL and SkyRL configs use each framework's native format directly — no transla
 
 ### Key Settings (Qwen3.5-27B, 48K Context)
 
-| Parameter | SFT | GRPO |
+| Parameter | SFT | Online RL |
 |-----------|-----|------|
 | Context length | 32768 (`cutoff_len`) | 32768 (`max_prompt_length`) |
 | Max completion | N/A | 8192 (`max_generate_length`) |
@@ -274,12 +281,12 @@ Two Docker targets from a single multi-stage Dockerfile, separated to avoid depe
 | Target | Base | Purpose |
 |--------|------|---------|
 | `sft` | `nvcr.io/nvidia/pytorch:25.11-py3` | TRL SFT + merge + validate + export |
-| `grpo` | `nvcr.io/nvidia/pytorch:25.11-py3` | SkyRL GRPO + Ray + vLLM |
+| `online_rl` | `nvcr.io/nvidia/pytorch:25.11-py3` | SkyRL Online RL + Ray + vLLM |
 
 ```bash
 docker build -t trajgym:sft  --target sft  -f docker/Dockerfile .
 docker build -t trajgym:sft-trl --target sft-trl -f docker/Dockerfile .
-docker build -t trajgym:grpo --target grpo -f docker/Dockerfile .
+docker build -t trajgym:online_rl --target online_rl -f docker/Dockerfile .
 ```
 
 ## Evaluation Pipeline
@@ -371,15 +378,15 @@ trajgym-agent \
 
 **Solution**: The TRL backend natively supports model-specific configurations uniformly and scales appropriately. No Python code changes per experiment.
 
-### 2. SkyRL for GRPO
+### 2. SkyRL for Online RL
 
-**Problem**: Custom GRPO script required 6 monkey-patches for GLM-4.7-Flash MoE on Blackwell GPUs (prefix check, dtype cast, weight sync translation, NCCL segfault, etc.).
+**Problem**: Custom Online RL script required 6 monkey-patches for GLM-4.7-Flash MoE on Blackwell GPUs (prefix check, dtype cast, weight sync translation, NCCL segfault, etc.).
 
-**Solution**: SkyRL uses Ray process isolation — vLLM runs in a separate process from training. This removes the old in-repo monkey-patch-heavy GRPO loop. Remaining upstream compatibility fixes are isolated in `docker/patches/`.
+**Solution**: SkyRL uses Ray process isolation — vLLM runs in a separate process from training. This removes the old in-repo monkey-patch-heavy Online RL loop. Remaining upstream compatibility fixes are isolated in `docker/patches/`.
 
 ### 3. BaseTextEnv Over SkyRL-Agent
 
-**Problem**: SkyRL-Agent's `ReActAgent` and `TOOL_REGISTRY` are designed for SWE-Bench tasks. CTF challenges need 13 custom tools, multi-signal rewards, per-challenge Docker routing, and strict SFT-GRPO token format parity.
+**Problem**: SkyRL-Agent's `ReActAgent` and `TOOL_REGISTRY` are designed for SWE-Bench tasks. CTF challenges need 13 custom tools, multi-signal rewards, per-challenge Docker routing, and strict SFT-Online RL token format parity.
 
 **Solution**: Use `skyrl-gym`'s `BaseTextEnv` directly. Tool execution via `SubprocessExecutor`, reward via `Reward`, schemas injected into prompts deterministically. Plugs into SkyRL-Train's `BasePPOExp` without the agent abstraction layer.
 
@@ -399,7 +406,7 @@ MoE models (GLM-4.7-Flash) have unique constraints documented in their config fi
 
 ## Hardware Compatibility
 
-| Hardware | SFT (Dense 3B) | SFT (MoE 30B) | GRPO (Dense 3B) | GRPO (MoE 30B) |
+| Hardware | SFT (Dense 3B) | SFT (MoE 30B) | Online RL (Dense 3B) | Online RL (MoE 30B) |
 |----------|----------------|----------------|------------------|-----------------|
 | 128GB+ unified memory GPU | QLoRA 4-bit | BF16 LoRA | Colocate mode | Colocate mode |
 | H200 (141GB) | QLoRA 4-bit | BF16 LoRA | Colocate mode | Zero-offload possible |
@@ -410,7 +417,7 @@ MoE models (GLM-4.7-Flash) have unique constraints documented in their config fi
 ### Adding New Models
 
 1. Create `examples/<model>/training.yaml` with SFT hyperparameters
-2. Create `src/trajgym/training/grpo_templates/<model>.yaml` with GRPO hyperparameters
+2. Create `src/trajgym/training/online_rl_templates/<model>.yaml` with Online RL hyperparameters
 3. Add a formatter in `src/trajgym/formatters/` if the chat template is non-standard
 4. Add detection logic to `formatters/base.py` factory method
 
@@ -431,7 +438,7 @@ Challenge registries are YAML-driven. To add a new benchmark:
 
 Open Trajectory Gym supports two agent protocols depending on the integration point:
 
-1. **StepAgent** (GRPO training): Set `online_rl.agent_class` in your training config to a dotted path to your class. The agent handles tool parsing and execution while SkyRL owns generation.
+1. **StepAgent** (Online RL training): Set `online_rl.agent_class` in your training config to a dotted path to your class. The agent handles tool parsing and execution while SkyRL owns generation.
 2. **Agent** (eval/GEPA): Pass `--agent custom:module.MyAgent` to `trajgym-eval` or `trajgym-train gepa`.
 3. **Runtime bridge** (external frameworks): Use `TRAJGYM_AGENT_MODE=native` with an adapter script. See `examples/bring-your-own/agent/template_adapter.py`.
 

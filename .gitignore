@@ -121,8 +121,8 @@ data/archive/
 !data/.gitkeep
 !data/README.md
 !data/sft.jsonl
-!data/online_rl_quality.jsonl
-!data/online_rl_quality.jsonl.manifest.json
+!data/online_rl.jsonl
+!data/online_rl.jsonl.manifest.json
 
 checkpoints/
 *.ckpt

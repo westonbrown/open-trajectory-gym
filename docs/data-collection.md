@@ -43,7 +43,7 @@ done
 
 ### Verify
 
-Good traces have 10-100 messages with mixed reasoning + tool calls. SFT needs `success: true`; GRPO uses both successes and failures.
+Good traces have 10-100 messages with mixed reasoning + tool calls. SFT needs `success: true`; Online RL uses both successes and failures.
 
 ```bash
 cat targets/cybench/[Very Easy]\ Dynastic/stats.json | jq '{success, flag_found}'
@@ -77,7 +77,7 @@ See `configs/synthetic_data_generation/README.md` for manifest authoring.
 ## Convert to Training Data
 
 ```bash
-# Successful traces → SFT, all traces → GRPO
+# Successful traces → SFT, all traces → Online RL
 trajgym-convert \
   --input targets/cybench/ \
   --output data/sft.jsonl \
@@ -102,7 +102,7 @@ Collect in order of increasing difficulty. Ensure category diversity across web 
 | Training Stage | Minimum | Recommended |
 |----------------|---------|-------------|
 | **SFT** | 100 traces | 500+ traces |
-| **GRPO** | 50 trajectories | 200+ trajectories |
+| **Online RL** | 50 trajectories | 200+ trajectories |
 
 ## Next Steps
 
