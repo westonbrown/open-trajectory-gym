@@ -63,14 +63,17 @@ Qwen3.5-27B evaluated on [CyBench](https://cybench.github.io/) 40-challenge suit
 |-------|-------------------|-------------------|-------------------|-------|
 | Qwen3.5-27B (base) | **5/40 (12.5%)** | 9.3 | 7m 41s | No fine-tuning |
 | + SFT | **10/40 (25.0%)** | 12.1 | 5m 28s | +5 challenges after SFT on expert traces |
-| + SFT + Online RL | In progress | — | — | Online RL with live tool execution |
+| + SFT + Online RL | **14/40 (35.0%)** | — | — | +4 challenges after Online RL (RLOO) with live tool execution |
+
+**Online RL training run:** 19 steps (of 40), 8 generations per step, ~6h wall time on 2x H200 SXM. 63/152 rollouts captured the flag (41.4%). 7 of 19 steps produced meaningful RLOO gradient signal (mixed solve/fail outcomes). OOM crash at step 19 on a medium crypto challenge (67K token context in SDPA backward pass).
 
 ### Key Observations
 
 - **SFT unlocks expert-level challenges.** SFT solves shuffled-aes (Expert crypto) and MissingBits (Expert crypto) — challenges the base model cannot solve. SFT teaches systematic attack workflows (source audit → oracle interaction → automated solver) from expert traces.
-- **SFT's structural value enables Online RL.** Beyond solve rate (5/40 → 10/40), SFT teaches consistent tool-call format needed for online RL training. Without format compliance, RL rollouts fail to parse. During Online RL, the SFT model solved challenges like Flag Command 3/4 times — the variance between successes and failures is exactly the signal RLOO needs for policy gradient updates.
+- **SFT's structural value enables Online RL.** Beyond solve rate (5/40 → 10/40), SFT teaches consistent tool-call format needed for online RL training. Without format compliance, RL rollouts fail to parse.
+- **Online RL adds +4 challenges over SFT.** Online RL with live tool execution (RLOO advantage estimation, 8 generations per challenge) solved 4 additional challenges the SFT model could not. The model improved most on Easy-tier web exploitation (Unbreakable: 1/8 → 4/8 solve rate) and achieved the first medium-difficulty crypto solve (Partial Tenacity). Only 7 of 40 training steps produced meaningful gradient signal — steps with mixed solve/fail outcomes (1-7 of 8 generations succeeding) drive RLOO learning, while all-solve or all-fail batches produce zero variance.
 - **16K context limit caused 19/32 docker challenge failures** in SFT eval. Model runs out of context during multi-step exploitation chains.
-- **Difficulty cliff at Medium.** Very Easy challenges are reliably solved; Medium+ requires multi-step reasoning the base model lacks.
+- **Difficulty cliff at Medium.** Very Easy challenges are reliably solved; Medium+ requires multi-step reasoning chains that remain at the frontier of model capability.
 
 ### Case Study: shuffled-aes (Expert / Crypto — Custom Block Cipher)
 
@@ -193,7 +196,7 @@ Swap any component without touching the rest:
 |-----------|-----|-------|
 | **Agent** | Implement `StepAgent` (Online RL) or `Agent` (eval/GEPA). Native adapter mode shells out to any external process via `TRAJGYM_AGENT_CMD`. | [`examples/bring-your-own/agent/`](examples/bring-your-own/agent/) |
 | **Model** | Create `examples/<model>/training.yaml`. Optional custom formatter in `src/trajgym/formatters/`. | [`examples/bring-your-own/model/`](examples/bring-your-own/model/) |
-| **Benchmark** | Define tasks in a YAML challenge registry (docker services or static files). Any domain — CTF, SWE, sysadmin, data analysis. | [`examples/bring-your-own/benchmark/`](examples/bring-your-own/benchmark/) |
+| **Benchmark** | Define tasks in a YAML challenge registry (docker services or static files). Any domain — CTF, SWE, sysadmin, data analysis. | [`docs/byo_benchmark.md`](docs/byo_benchmark.md) |
 | **Reward** | Configure weights via YAML, or replace entirely with any `__call__(completions, **kwargs) -> list[float]`. | [`docs/architecture.md`](docs/architecture.md#ctf-reward-function) |
 
 Included model configs: Qwen3.5-27B, Qwen3.5-9B, Qwen3.5-4B, Devstral-24B. See [`examples/`](examples/) for all configs.
@@ -237,7 +240,7 @@ Open Trajectory Gym builds heavily on the foundational work of some incredibly p
 
 - **[SkyRL](https://github.com/NovaSky-AI/SkyRL)** -- Online RL (RLOO/DAPO) backbone ([patched fork](https://github.com/westonbrown/SkyRL/tree/open-ctf/v0.3.1-patched))
 - **[TRL](https://github.com/huggingface/trl)** -- SFT stage
-- **[OpenThoughts Agent](https://github.com/OpenThoughts-Group/OpenThoughts-Agent)** -- Inspiration for scalable RL inference execution and dataset curation
+- **[OpenThoughts Agent](https://github.com/open-thoughts/OpenThoughts-Agent)** -- Inspiration for scalable RL inference execution and dataset curation
 - **[vLLM](https://github.com/vllm-project/vllm)** -- Inference engine for generation + serving
 - **[BoxPwnr](https://github.com/0ca/BoxPwnr)** -- Reference agent and trace source ([@0ca](https://github.com/0ca))
 - **[CyBench](https://cybench.github.io/)** -- Featured benchmark ([paper](https://arxiv.org/abs/2408.08926), ICLR 2025 Oral)
