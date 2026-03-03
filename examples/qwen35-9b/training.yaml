@@ -1,0 +1,229 @@
+# Qwen3.5-9B Training Configuration (2x high-memory GPUs, 80GB+ each)
+# ==============================================================
+# Dense Qwen3.5 text model (9B params, same hybrid GDN+attention as 27B).
+# 2x high-memory GPUs (80GB+ each): GPU 0 vLLM BF16, GPU 1 FSDP2 trainer BF16.
+#
+# Key advantages over 27B config:
+#   - 9B vs 27B → ~19 GB BF16 vs ~54 GB — 3x smaller footprint
+#   - ZERO truncation: 65K context covers 100% of SFT data (max ~61K tokens)
+#   - Double GRPO context: 131K vLLM / 65K prompt / 16K completion
+#   - Higher LoRA rank (r=128 vs r=64) — memory allows more expressivity
+#   - 6 GRPO generations (vs 4) — better RLOO variance signal
+#   - 100+ GB headroom per GPU for activations and KV cache
+#
+# Architecture: Qwen3_5ForConditionalGeneration (text-only path)
+#   32 layers: [3x Linear (Gated DeltaNet) + 1x Full Attention] × 8
+#   Hidden: 4096, Intermediate: 12288
+#   Full attention: 16Q/4KV heads, head_dim=256
+#   Linear attention: 16K/32V heads, key_dim=128
+# Vocab: 248,320 | Context: 262,144 native
+# Tool calling: qwen3_coder XML | Reasoning: <think>/<\think>
+#
+# SFT data stats (data/sft.jsonl, 285 samples):
+#   Median: ~4.4K tokens | P95: ~34K | P99: ~53K | Max: ~61K
+#   >32K: 18/285 (6.3%) | >48K: 3/285 (1.1%) | >64K: 0/285
+#   65K context = 100% coverage, zero truncation.
+#
+# SFT lessons applied from 27B training:
+#   - Liger CE global patch REQUIRED (65K × 248K vocab = 60.5 GiB logits without it)
+#   - SDPA attention (FA2 crashes with gradient checkpointing on Qwen3.5)
+#   - TRL 0.29 completion_only_loss=True
+#   - Packing for efficient batching
+#   - warmup_steps not warmup_ratio (deprecated in transformers 5.2)
+
+model:
+  name: "Qwen/Qwen3.5-9B"
+  # 65K: covers 100% of SFT data with zero truncation.
+  # With Liger CE (chunked cross-entropy), logits never fully materialized.
+  # Without Liger: 1 × 65K × 248K × 4B = 60.5 GiB → instant OOM.
+  # With Liger: ~2 GB for chunked CE regardless of sequence length.
+  max_seq_length: 65536
+  # BF16: 9B model is only ~19 GB — no quantization needed.
+  load_in_4bit: false
+  load_in_8bit: false
+
+lora:
+  # r=128: double the 27B config's r=64. 9B model has 100+ GB headroom per GPU,
+  # so we can afford the higher rank for more expressive adapter capacity.
+  # alpha=256 gives scaling factor alpha/r = 2.0 (same as 27B's 128/64).
+  # Full fine-tuning IS feasible (9B fits on 2x high-memory GPUs with optimizer states ~120 GB)
+  # but LoRA is preferred for 285 samples to prevent catastrophic forgetting,
+  # and is required for GRPO weight sync between vLLM and trainer.
+  r: 128
+  alpha: 256
+  dropout: 0
+  # Dense model: all 7 standard target modules are safe (no MoE routing).
+  target_modules:
+    - q_proj
+    - k_proj
+    - v_proj
+    - o_proj
+    - gate_proj
+    - up_proj
+    - down_proj
+  use_rslora: false
+
+sft:
+  epochs: 3
+  # batch_size=1: at 65K context, some samples are 50-61K tokens.
+  # Packing cannot combine these with others, so they fill a batch alone.
+  # batch=2 would require 2 × 61K tokens → OOM on activations.
+  # batch=1 is safe; packing combines shorter samples for throughput.
+  batch_size: 1
+  gradient_accumulation_steps: 8
+  # Effective batch: 1 × 8 = 8 (same as 27B config)
+  learning_rate: 2.0e-5
+  warmup_steps: 1
+  weight_decay: 0.01
+  lr_scheduler_type: cosine
+  packing: true
+  # SDPA: FA2 crashes with gradient checkpointing + multi-GPU sharding on Qwen3.5.
+  flash_attn: false
+  gradient_checkpointing: true
+  # Memory budget for SFT on 2x high-memory GPUs (140+ GB each) @ 65K context:
+  #   Model (BF16): ~19 GB
+  #   LoRA adapters (r=128, 7 modules): ~3 GB
+  #   Optimizer (8-bit AdamW): ~6 GB
+  #   Liger CE (chunked, replaces 60.5 GiB logits): ~2 GB
+  #   Gradient activations (checkpointed, 65K, batch=1): ~35 GB
+  #   Framework/OS: ~5 GB
+  #   Total: ~70 GiB → fits a single high-memory GPU (140+ GB)
+  #   With balanced sharding: ~35 GiB per GPU (73 GB headroom each!)
+
+online_rl:
+  epochs: 1
+  difficulty_max: "master"
+  batch_size: 1
+  # batch_size(1) × grad_accum(6) = 6, divisible by num_gen(6) ✓
+  gradient_accumulation_steps: 6
+  learning_rate: 5.0e-6
+  warmup_ratio: 0.10
+  beta: 0.0
+  loss_type: dapo
+  # 6 generations: more RLOO variance than 27B's 4.
+  # 9B model + 131K context + 8 seqs fits with 85% gpu_mem.
+  # More generations = better leave-one-out baselines = stronger gradient signal.
+  num_generations: 6
+  advantage_estimator: rloo
+  # All context doubled from 27B config:
+  #   max_completion_length: 8K → 16K (room for long reasoning + solver code)
+  #   max_prompt_length: 32K → 65K (full SFT-length prompts)
+  #   vllm_max_model_len: 65K → 131K (prompt + all turns + completions)
+  max_completion_length: 16384
+  max_prompt_length: 65536
+  vllm_max_model_len: 131072
+  max_tool_calling_iterations: 60
+  horizon_schedule:
+    rounds: [20, 32, 48, 60]
+    step_interval: 4
+  hard_mask_statuses:
+    - infra_unreachable
+    - target_mismatch
+    - parser_error
+    - tool_timeout
+  positive_only_until_step: 120
+  positive_only_reward_floor: 0.0
+  max_samples_per_challenge: 1
+  drop_static_challenges: false
+  drop_unresolved_registry_samples: true
+  target_port_offset: 0
+  target_host_override: null
+  target_map_path: null
+  target_map_strict: false
+  prefer_registry_target: true
+  fail_on_target_collisions: true
+  fail_on_flag_mismatch: true
+  fail_on_missing_registry_flag: true
+  require_all_registry_challenges: false
+  use_new_inference: true
+  allow_new_inference_for_qwen35: true
+  enable_prefix_caching: false
+  enable_chunked_prefill: true
+  enforce_eager: true
+  vllm_language_model_only: true
+  vllm_attention_backend: "TRITON_ATTN"
+  max_grad_norm: 1.0
+  epsilon_high: 0.28
+  weight_decay: 0.1
+  scale_rewards: false
+  repetition_penalty: 1.0
+  generation_temperature: 0.70
+  generation_top_p: 0.95
+  generation_top_k: 20
+  generation_min_p: 0.0
+  generation_stop:
+    - "</tool_call>"
+    - "<|im_end|>"
+  use_vllm: true
+  vllm_mode: server
+  vllm_server_url: null
+  # 9B BF16 (~19 GB) + KV cache at 131K × 8 seqs.
+  # 0.85 x GPU memory = ~121 GB available. Model 19 GB + KV ~95 GB = 114 GB. Fits.
+  gpu_memory_utilization: 0.85
+  max_num_seqs: 8
+  max_num_batched_tokens: 65536
+  apply_overlong_filtering: false
+  max_env_workers: 40
+  flash_attn: false
+  use_sample_packing: false
+  require_fast_linear_attention: true
+  pytorch_cuda_alloc_conf: "expandable_segments:True"
+  tool_call_format: qwen3_coder
+  chat_template: "qwen3_without_thinking"
+  chat_template_kwargs:
+    enable_thinking: true
+  native_tool_schemas: false
+  zero_variance_filter: true
+  dynamic_sampling:
+    type: "filter"
+    max_sample_batches: 10
+  step_wise_trajectories: false
+  allow_step_wise_with_custom_chat_template: false
+  agent_class: trajgym.agent.default_agent.DefaultStepAgent
+  agent_kwargs:
+    max_consecutive_no_tool_calls: 2
+    max_tool_response_chars: 2500
+    runtime_cmd: "python src/trajgym/agent/framework_runtime_bridge.py"
+    runtime_timeout_seconds: 20
+    runtime_passthrough: false
+    runtime_fallback_to_parser: false
+    runtime_env:
+      TRAJGYM_AGENT_FRAMEWORK: "boxpwnr_langgraph"
+      TRAJGYM_AGENT_MODE: "tool_calls"
+  # Memory budget for GRPO on 2x high-memory GPUs (140+ GB each), server mode:
+  #   GPU 1 — FSDP2 Trainer:
+  #     Policy model (BF16): ~19 GB
+  #     Ref model (beta=0): ~0 GB (offloaded)
+  #     LoRA (r=128, 7 modules) + AdamW optimizer: ~9 GB
+  #     Gradient activations (checkpointed, 65K): ~25 GB
+  #     Framework/OS: ~5 GB
+  #     Total: ~58 GB (~85 GB headroom on 140+ GB GPU)
+  #
+  #   GPU 0 — vLLM Engine (BF16):
+  #     Model (BF16): ~19 GB
+  #     KV cache (8 seqs x 131K, gpu_mem_util=0.85): ~95 GB
+  #     Overhead: ~5 GB
+  #     Total: ~119 GB (~24 GB headroom on 140+ GB GPU)
+
+reward:
+  flag_weight: 0.40
+  efficiency_weight: 0.15
+  progression_weight: 0.08
+  exploration_weight: 0.05
+  uniqueness_weight: 0.05
+  format_weight: 0.10
+  recovery_weight: 0.09
+  cognitive_weight: 0.08
+  hallucination_penalty: 0.20
+  interaction_quality_weight: 0.10
+  noise_range: 0.01
+  exploration_gamma: 0.95
+  use_gdpo: false
+
+output:
+  save_steps: 25
+  logging_steps: 1
+  report_to: tensorboard
+
+online_rl_logging:
+  enable_trajectory_logging: true

@@ -1,0 +1,361 @@
+# Qwen3.5-27B Training Configuration (2x high-memory GPUs, 80GB+ each)
+# ==============================================================
+# Dense Qwen3.5 text model (27B params).
+# 2x high-memory GPUs (80GB+ each): GPU 0 vLLM FP8, GPU 1 FSDP2 trainer BF16.
+#
+# Key properties:
+#   - Dense model: BF16 LoRA on high-memory GPU (no quantization needed)
+#   - batch_size > 1 safe (no MoE routing NaN)
+#   - GRPO: non-colocated vLLM server mode with LoRA weight sync
+#   - ~51 GB BF16 inference (merged) / ~54 GB BF16 training weights
+#
+# Architecture: Qwen3_5ForConditionalGeneration (text-only path in GRPO/SFT)
+# Vocab: 248,320 (text config); tokenizer vocab is 248,044
+# Context: 262,144 max_position_embeddings
+# Tool calling: qwen3_coder format (XML-style tool calls)
+# Reasoning: <think> / </think> tags
+# Chat template: ChatML (<|im_start|> / <|im_end|>)
+
+model:
+  name: "Qwen/Qwen3.5-27B"
+  # 16K context for SFT: BF16 27B model + fla gated_delta_rule backward
+  # OOMs at 32K on dual GPU (near full VRAM used, Triton autotuner needs
+  # headroom). 16K covers 65% of data directly; packing fills batches
+  # from shorter samples. Can increase after confirming stability.
+  max_seq_length: 16384
+  # BF16 LoRA: 80GB+ GPU has sufficient VRAM — no need for 4-bit quantization.
+  # ~54 GB BF16 weights + ~25 GB training overhead = ~79 GB, within budget.
+  load_in_4bit: false
+  load_in_8bit: false
+
+lora:
+  r: 64
+  alpha: 128
+  dropout: 0
+  # Standard Qwen3 target modules (same linear layers as Qwen3-8B).
+  # Dense model: all FFN layers are safe to target.
+  target_modules:
+    - q_proj
+    - k_proj
+    - v_proj
+    - o_proj
+    - gate_proj
+    - up_proj
+    - down_proj
+  use_rslora: false
+
+sft:
+  # 3 epochs: balances convergence vs training time.
+  epochs: 3
+  # batch_size=1: 248K vocab -> logits tensor is ~7.6 GiB at batch=1 x 8K seq.
+  # Could try batch=2 with sufficient GPU memory headroom, but batch=1 is safe default.
+  batch_size: 1
+  gradient_accumulation_steps: 8
+  # Effective batch: 1 * 8 = 8
+  learning_rate: 2.0e-5
+  # warmup_steps: with ~36 packed optimizer steps across 3 epochs,
+  # 1 step warmup is ~3%. warmup_ratio deprecated in transformers 5.2.
+  warmup_steps: 1
+  weight_decay: 0.01
+  lr_scheduler_type: cosine
+  # Packing: densely pack multiple short samples per batch.
+  # 285 samples at median ~5K tokens pack ~6-8 per 49K batch.
+  # Reduces optimizer steps from ~107 to ~36 (3x faster).
+  packing: true
+  # SDPA attention: FA2 causes illegal memory access during gradient
+  # checkpointing backward pass with multi-GPU device_map sharding on
+  # Qwen3.5 (accelerate hooks + FA2 + recompute = crash). SDPA uses
+  # Flash SDP kernels internally on Hopper+ GPUs and is stable.
+  flash_attn: false
+  # Gradient checkpointing: trades compute for memory.
+  # Required for 49K context on dual GPU.
+  gradient_checkpointing: true
+  # Memory budget for SFT on high-memory GPU (140+ GB VRAM) @ 48K context:
+  #   Model (BF16): ~54 GB
+  #   LoRA adapters (r=64, 7 modules): ~1.5 GB
+  #   Optimizer (8-bit AdamW): ~3 GB
+  #   Logits (1 x 48K x 248K x 4B): ~45.5 GiB
+  #   Gradient activations (checkpointed, 48K, batch=1): ~45 GB
+  #   Framework/OS: ~5 GB
+  #   Total: ~154 GiB — tight on a single GPU, use dual-GPU sharding.
+  #   If OOM: reduce to max_seq_length=40960.
+
+online_rl:
+  epochs: 1
+  # Use full CyBench coverage for production runs.
+  # Includes master difficulty so all 40 registry challenges can participate.
+  difficulty_max: "master"
+  batch_size: 1
+  # batch_size(1) * grad_accum(8) must be divisible by num_gen(8): 8 % 8 = 0 (valid)
+  gradient_accumulation_steps: 8
+  # v8: 10x LR increase (5e-6 → 5e-5). v7 showed policy_loss≈1e-08 and
+  # ppo_clip_ratio=0.0 across all 15 steps — weights never moved. With binary
+  # reward producing larger RLOO advantages (0.5+ vs 0.12), higher LR ensures
+  # the gradient signal actually updates LoRA weights.
+  learning_rate: 5.0e-5
+  # Reduced from 0.10 (10 steps) to 0.05 (~2 steps): with progressive
+  # difficulty ordering, the easiest solvable challenges (Flag Command,
+  # It Has Begun) come first — model needs full LR to learn from them.
+  warmup_ratio: 0.05
+  beta: 0.0
+  loss_type: dapo
+  # v11: 2 epochs per batch creates policy drift from old_log_probs between
+  # passes, activating the PPO clipping mechanism. With batch_size=1 and
+  # epochs=1 (v10), ratio=exp(log_probs - old_log_probs) ≈ 1.0 always →
+  # ppo_clip_ratio=0.0 and policy_loss≈10^-8. Standard PPO uses 3-10 epochs.
+  update_epochs_per_batch: 2
+  # v11: sequence-level loss averaging. token_mean (v10) averages over
+  # 7K-22K tokens per episode, diluting RLOO advantages to ~10^-8 final loss.
+  # sequence_mean preserves per-sequence RLOO contrast (solve ~0.93 vs fail ~0.07).
+  loss_reduction: sequence_mean
+  # v8: 8 generations for better RLOO variance. v7 used 5 gens but on easy
+  # challenges (Dynastic 5/5, PackedAway 4/5) most gens got identical rewards
+  # → near-zero RLOO advantage. 8 gens increases P(mixed solve/fail) per step.
+  # Qwen3.5-27B hybrid attention: only 16/64 layers use standard KV cache,
+  # so 8 seqs * 65K context ≈ 34 GB KV cache — fits in 0.85 * 143 GB budget.
+  # batch_size(1) * grad_accum(8) = 8, 8 % 8 = 0 (valid).
+  num_generations: 8
+  advantage_estimator: rloo
+  # Per-turn generation cap (multi-turn). Most completions are <2K tokens
+  # (short reasoning + tool call). 8K allows Python solvers and long
+  # shell commands without truncating mid-tool-call (4K caused truncated
+  # <tool_call> tags → parser failures → wasted turns).
+  # prompt(32K) + completion(8K) = 40K < vllm_max_model_len(65K).
+  max_completion_length: 8192
+  # 60 tool iterations for long-horizon BoxPwnr-style runs.
+  max_tool_calling_iterations: 60
+  # Progressive horizon schedule:
+  # Start at 20 turns (v3/v4 solved 05-motp at 19-20 turns; 15 was too
+  # aggressive — 0/5 solves vs 2/5 at 20). Ramp to 60 for harder challenges.
+  # Steps 1-10: 20 turns, 11-20: 30, 21-30: 45, 31+: 60.
+  horizon_schedule:
+    rounds: [20, 30, 45, 60]
+    step_interval: 10
+  # Rollout statuses that should be hard-masked (reward=0) so infra/parser
+  # failures do not contaminate policy gradients.
+  hard_mask_statuses:
+    - infra_unreachable
+    - target_mismatch
+    - parser_error
+    - tool_timeout
+  # Warmup curriculum: for early steps, mask non-positive rollout rewards so
+  # failed trajectories do not dominate updates before tool usage stabilizes.
+  positive_only_until_step: 120
+  positive_only_reward_floor: 0.0
+  # Cap to one sample per challenge for broad coverage with predictable ETA.
+  max_samples_per_challenge: 1
+  # Include static challenges in online RL conversion (file-based targets).
+  # Required for full CyBench40 coverage.
+  drop_static_challenges: false
+  # When a challenge registry is supplied, drop samples that cannot be mapped
+  # to the canonical benchmark challenge IDs.
+  drop_unresolved_registry_samples: true
+  # Optional target URL rewrite for tunneled challenge ranges.
+  # Example: set to 10200 to map 32801 -> 43001 on SSH-forwarded RunPod jobs.
+  target_port_offset: 0
+  target_host_override: null
+  # Optional per-challenge target map file (JSON/YAML) produced from live
+  # challenge infra. Preferred for remote GPU server tunnels where static registry
+  # ports are not the externally reachable endpoints.
+  target_map_path: data/target_map_grpo_full.json
+  target_map_strict: false
+  # Ignore stale in-prompt localhost URLs and use canonical registry target when
+  # available (especially important when target_map_path is set).
+  prefer_registry_target: true
+  # Fail fast when multiple challenge IDs collapse onto one URL (common stale
+  # tunnel mapping failure mode).
+  fail_on_target_collisions: true
+  # Fail fast when dataset flags drift from canonical registry flags.
+  fail_on_flag_mismatch: true
+  # Fail fast if registry entries used by training have empty flags.
+  fail_on_missing_registry_flag: true
+  # Relaxed for initial GRPO: 32/40 CyBench challenges have prompt data.
+  # Missing 8 hard/expert/master docker challenges without SFT traces.
+  require_all_registry_challenges: false
+  # Legacy vLLM engine path crashes on LoRA startup for Qwen3.5
+  # (adapter activation during cudagraph warmup). Keep new inference enabled.
+  use_new_inference: true
+  allow_new_inference_for_qwen35: true
+  # Prefix caching: reuse KV cache for shared prompt prefix across the 5
+  # generations of the same challenge. Saves ~20-30s per step on prompt
+  # re-computation. Enabled now that vLLM 0.16 stabilized Qwen3.5 support.
+  enable_prefix_caching: true
+  enable_chunked_prefill: true
+  enforce_eager: true
+  # Cap prompt length for GRPO/vLLM memory while preserving long trajectories.
+  # Restored to 32K with max_num_seqs=4 (halved KV cache fits 64K model len).
+  max_prompt_length: 32768
+  # Explicit vLLM max model len for stable KV-cache sizing.
+  # Bumped to 64K: max_num_seqs reduced from 8→4, halving KV cache demand.
+  # BF16 model (51 GB) + KV cache (4 seqs x 64K) fits in 0.80 x available GPU memory.
+  # Keep above max_prompt_length + max_completion_length (32768+8192=40960).
+  vllm_max_model_len: 65536
+  # Qwen3.5 uses a conditional-generation config in merged checkpoints.
+  # Force text-only vLLM path so local engines do not initialize vision processors.
+  vllm_language_model_only: true
+  # Force Triton attention backend to avoid PTX/toolchain incompatibilities
+  # observed with flash-kernel paths on this runtime.
+  vllm_attention_backend: "TRITON_ATTN"
+  # Relaxed from 0.1 to 1.0 for initial training: per-token advantages
+  # are small (0.008-0.019) with early RLOO, so 0.1 clip is too aggressive.
+  # Standard GRPO default is 1.0.
+  max_grad_norm: 1.0
+  epsilon_high: 0.28
+  weight_decay: 0.1
+  scale_rewards: false
+  # Use local non-colocated vLLM engines so LoRA weight sync stays on SkyRL's
+  # supported path (NCCL/CUDA IPC). This still allows trainer and generator to
+  # use separate GPUs via Ray placement.
+  use_vllm: true
+  vllm_mode: server
+  vllm_server_url: null
+  # Dedicated GPU0 vLLM engine on high-memory GPU: BF16 model ~51GB + KV cache
+  # at 65K context. Raised from 0.80→0.85: v3 showed 30 GB free at 0.80.
+  gpu_memory_utilization: 0.85
+  # vLLM scheduling bounds: match num_generations (8).
+  # Qwen3.5 hybrid attention: 16/64 layers use standard KV cache → ~4.2 GB/seq.
+  # 8 seqs * 4.2 GB = ~34 GB KV cache. Model(51) + KV(34) + overhead(5) = ~90 GB.
+  # 0.85 * 143 GB = 122 GB budget → ~32 GB headroom.
+  max_num_seqs: 8
+  max_num_batched_tokens: 32768
+  # Disabled: overlong filter zeros loss_mask when custom template adds
+  # trailing \n after {% endgeneration %} (response[-1] != eos_token_id).
+  # See Patch #22.  Safe to disable for retokenized multi-turn.
+  apply_overlong_filtering: false
+  # Parallel env workers: match num_generations (8) to avoid idle workers.
+  max_env_workers: 8
+  # Disable trainer flash-attn path on this runtime due PTX/toolchain mismatch.
+  flash_attn: false
+  use_sample_packing: false
+  # Qwen3.5 linear-attention blocks require flash-linear-attention + causal-conv1d.
+  # Keep this strict in production to fail fast on new instances instead of
+  # silently using unstable torch fallback kernels.
+  require_fast_linear_attention: true
+  # Reduce allocator fragmentation during long GRPO policy updates.
+  pytorch_cuda_alloc_conf: "expandable_segments:True"
+  # v10: temperature lowered from 1.0 to 0.7. At temp=1.0 (Qwen3.5 thinking
+  # mode recommended), the model fails precise reasoning tasks like string
+  # reversal — 0/8 on It Has Begun despite finding both flag halves. At 0.7,
+  # reasoning is tighter while still allowing exploration diversity across 8
+  # generations. top_k removed (default 0 = disabled) to avoid over-constraining.
+  generation_temperature: 0.7
+  generation_top_p: 0.90
+  generation_top_k: 0
+  generation_min_p: 0.0
+  # Tool call format for vLLM: use qwen3_coder parser.
+  tool_call_format: qwen3_coder
+  # Thinking mode: Qwen3.5 generates <think>...</think> before tool calls.
+  # SkyRL uses qwen3_without_thinking template: strips thinking from history,
+  # preserves on last turn. Loss mask includes thinking on final turn only.
+  # OpenThoughts-Agent pattern: enable_thinking + response_prefix seeds generation.
+  chat_template: "qwen3_without_thinking"
+  # enable_thinking has no effect when using the custom qwen3_without_thinking
+  # template (which strips <think> from history but preserves on final turn).
+  # The model still generates thinking blocks via SFT conditioning.
+  # Set to true to express intent for future native-template migration.
+  chat_template_kwargs:
+    enable_thinking: true
+  # SkyRL's custom qwen3_without_thinking template does NOT have a
+  # {% if tools %} block — passing tools via chat_template_kwargs silently
+  # drops them.  Use text injection via _inject_tool_schemas() instead,
+  # which adds explicit qwen3_coder XML format instructions to the system
+  # message.  See Issue #38.  runtime.py also auto-downgrades when it
+  # detects custom template + native_tool_schemas=true.
+  native_tool_schemas: false
+  # SkyRL zero-variance filter: skip prompt groups where all generations
+  # in the group receive the same reward (zero advantage signal).
+  # Avoids wasting gradient updates on uninformative batches.
+  zero_variance_filter: true
+  # SkyRL dynamic sampling (DAPO filter): when a prompt group has zero
+  # variance, resample up to max_sample_batches times before giving up.
+  # "filter" type discards zero-variance groups; "resample" type retries.
+  dynamic_sampling:
+    type: null  # DISABLED: crashes when ALL gens have same reward (e.g. 8/8 solves). zero_variance_filter handles loss masking safely instead.
+    max_sample_batches: 10
+  # Use episodic terminal reward for stability with custom chat templates.
+  # Step-wise mode currently emits malformed-trajectory warnings in this stack.
+  step_wise_trajectories: false
+  allow_step_wise_with_custom_chat_template: false
+  # Default online-RL agent runtime via generic bridge.
+  agent_class: trajgym.agent.default_agent.DefaultStepAgent
+  # Early-stop runaway trajectories when the model repeatedly emits text
+  # without valid tool calls.
+  agent_kwargs:
+    max_consecutive_no_tool_calls: 2
+    # Truncate per-tool output inserted into conversation to avoid runaway
+    # context growth on verbose commands.
+    max_tool_response_chars: 2500
+    runtime_cmd: "python src/trajgym/agent/framework_runtime_bridge.py"
+    runtime_timeout_seconds: 20
+    runtime_passthrough: false
+    runtime_fallback_to_parser: false
+    runtime_env:
+      TRAJGYM_AGENT_FRAMEWORK: "boxpwnr_langgraph"
+      TRAJGYM_AGENT_MODE: "tool_calls"
+  # Memory budget for GRPO on 2x high-memory GPUs (140+ GB each), server mode:
+  #   GPU 1 — FSDP2 Trainer:
+  #     Policy model (BF16): ~54 GB
+  #     Ref model (beta=0): ~0 GB (offloaded)
+  #     LoRA (r=64, 7 modules) + AdamW optimizer: ~5 GB
+  #     Gradient activations (checkpointed): ~25 GB
+  #     Framework/OS: ~5 GB
+  #     Total: ~89 GB (~54 GB headroom on 140+ GB GPU)
+  #
+  #   GPU 0 — vLLM Engine (BF16 merged):
+  #     Model (BF16): ~51 GB
+  #     KV cache (8 seqs x 65K, hybrid attn): ~34 GB (16/64 layers use KV cache)
+  #     Overhead: ~5 GB
+  #     Total: ~90 GB (~32 GB headroom on 143 GB GPU at 0.85 util)
+  #
+  #   v8: max_num_seqs=8, 65K context, 0.85 gpu_mem, 8 generations.
+
+reward:
+  # v9 flag-dominant reward with efficiency + format variance signals.
+  #
+  # v7: 4-signal reward compressed RLOO gap to 0.48 → zero gradient.
+  # v8: pure binary (1.0/0.0) maximized gap but crashed on all-solve
+  #   batches (8/8 Dynastic → zero variance → SkyRL dynamic_sampling crash).
+  #
+  # v9 keeps flag dominant (0.85) while adding:
+  #   - efficiency (0.10): differentiates fast vs slow solves → variance
+  #     on all-solve batches prevents zero_variance_filter masking.
+  #   - format (0.05): rewards well-formed tool calls, prevents format
+  #     degradation under RL exploration.
+  #
+  # Gap analysis (solve vs fail):
+  #   Solve (fast): 0.85 + 0.10*0.85 + 0.05*1.0 = 0.985
+  #   Solve (slow): 0.85 + 0.10*0.50 + 0.05*0.70 = 0.935
+  #   Fail (good format): 0.10*0.25 + 0.05*0.80 = 0.065
+  #   Fail (bad format):  0.10*0.25 + 0.05*0.20 = 0.035
+  #   → solve-fail gap ~0.90 (was 0.48 in v7, 1.0 in v8)
+  #   → all-solve variance std ~0.02 (was 0.0 in v8 → crash)
+  flag_weight: 0.85
+  efficiency_weight: 0.10
+  format_weight: 0.05
+  progression_weight: 0.0
+  exploration_weight: 0.0
+  uniqueness_weight: 0.0
+  recovery_weight: 0.0
+  cognitive_weight: 0.0
+  hallucination_penalty: 0.0
+  interaction_quality_weight: 0.0
+  noise_range: 0.0
+  exploration_gamma: 0.95
+  use_gdpo: false
+
+gepa:
+  budget: light
+  max_iters: 5
+  seed: 42
+  num_threads: 4
+  reflection_minibatch_size: 2
+  seed_prompt: null
+
+output:
+  save_steps: 25
+  logging_steps: 1
+  report_to: tensorboard
+
+online_rl_logging:
+  # Trajectory logging: saves per-generation JSONL for post-run analysis.
+  enable_trajectory_logging: true
