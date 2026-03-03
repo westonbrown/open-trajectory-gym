@@ -2,7 +2,7 @@
 
 Validates:
 - Config loading: GEPA config section parses from training.yaml
-- Challenge loading: _load_challenges() loads GRPO JSONL, extracts targets
+- Challenge loading: _load_challenges() loads Online RL JSONL, extracts targets
 - Metric wrapper: _build_metric() returns valid score + feedback from Reward
 - Per-challenge routing: target URL extraction from challenge text
 - _EnvAwareReAct: ground-truth resolution for augmented challenge text
@@ -22,8 +22,8 @@ from trajgym.rewards.reward import Reward
 # ---------------------------------------------------------------------------
 
 
-def _write_grpo_jsonl(path: Path, samples: list[dict]) -> None:
-    """Write a list of GRPO sample dicts as JSONL."""
+def _write_online_rl_jsonl(path: Path, samples: list[dict]) -> None:
+    """Write a list of Online RL sample dicts as JSONL."""
     with open(path, "w") as f:
         for sample in samples:
             f.write(json.dumps(sample) + "\n")
@@ -36,7 +36,7 @@ def _make_grpo_sample(
     challenge_id: str = "",
     target: str = "",
 ) -> dict:
-    """Create a minimal GRPO JSONL sample."""
+    """Create a minimal Online RL JSONL sample."""
     sample = {
         "messages": [
             {"role": "system", "content": "You are a CTF agent."},
@@ -230,13 +230,13 @@ class TestTargetExtraction:
 
 class TestLoadChallenges:
     def test_load_basic(self, tmp_path):
-        """Load challenges from a GRPO JSONL file."""
+        """Load challenges from a Online RL JSONL file."""
         samples = [
             _make_grpo_sample("Solve CTF at http://localhost:8080", "FLAG{a}"),
             _make_grpo_sample("Solve CTF at http://localhost:9090", "FLAG{b}"),
         ]
-        data_path = tmp_path / "grpo.jsonl"
-        _write_grpo_jsonl(data_path, samples)
+        data_path = tmp_path / "online_rl.jsonl"
+        _write_online_rl_jsonl(data_path, samples)
 
         # Mock dspy.Example with our lightweight stand-in
         mock_dspy = MagicMock()
@@ -255,8 +255,8 @@ class TestLoadChallenges:
     def test_load_max_samples(self, tmp_path):
         """max_samples limits how many examples are loaded."""
         samples = [_make_grpo_sample(f"Challenge {i}") for i in range(10)]
-        data_path = tmp_path / "grpo.jsonl"
-        _write_grpo_jsonl(data_path, samples)
+        data_path = tmp_path / "online_rl.jsonl"
+        _write_online_rl_jsonl(data_path, samples)
 
         mock_dspy = MagicMock()
         mock_dspy.Example = _MockExample
@@ -270,7 +270,7 @@ class TestLoadChallenges:
 
     def test_load_skips_empty_lines(self, tmp_path):
         """Empty lines in JSONL should be skipped."""
-        data_path = tmp_path / "grpo.jsonl"
+        data_path = tmp_path / "online_rl.jsonl"
         with open(data_path, "w") as f:
             f.write(json.dumps(_make_grpo_sample()) + "\n")
             f.write("\n")
@@ -293,8 +293,8 @@ class TestLoadChallenges:
             "messages": [{"role": "system", "content": "sys"}],
             "ground_truth_flag": "FLAG{x}",
         }
-        data_path = tmp_path / "grpo.jsonl"
-        _write_grpo_jsonl(data_path, [sample])
+        data_path = tmp_path / "online_rl.jsonl"
+        _write_online_rl_jsonl(data_path, [sample])
 
         mock_dspy = MagicMock()
         mock_dspy.Example = _MockExample
@@ -312,8 +312,8 @@ class TestLoadChallenges:
             challenge_text="Solve this static challenge",
             target="http://localhost:5555",
         )
-        data_path = tmp_path / "grpo.jsonl"
-        _write_grpo_jsonl(data_path, [sample])
+        data_path = tmp_path / "online_rl.jsonl"
+        _write_online_rl_jsonl(data_path, [sample])
 
         mock_dspy = MagicMock()
         mock_dspy.Example = _MockExample
@@ -329,8 +329,8 @@ class TestLoadChallenges:
     def test_load_with_challenge_id(self, tmp_path):
         """Challenge ID from metadata is preserved."""
         sample = _make_grpo_sample(challenge_id="eval-me")
-        data_path = tmp_path / "grpo.jsonl"
-        _write_grpo_jsonl(data_path, [sample])
+        data_path = tmp_path / "online_rl.jsonl"
+        _write_online_rl_jsonl(data_path, [sample])
 
         mock_dspy = MagicMock()
         mock_dspy.Example = _MockExample
@@ -363,8 +363,8 @@ class TestLoadChallengesWithRegistry:
             challenge_text="Solve static challenge",
             challenge_id="eval-me",
         )
-        data_path = tmp_path / "grpo.jsonl"
-        _write_grpo_jsonl(data_path, [sample])
+        data_path = tmp_path / "online_rl.jsonl"
+        _write_online_rl_jsonl(data_path, [sample])
 
         mock_registry = MagicMock()
         mock_registry.resolve_id.return_value = "eval-me"
@@ -389,8 +389,8 @@ class TestLoadChallengesWithRegistry:
             challenge_text="Target: http://localhost:8080",
             challenge_id="eval-me",
         )
-        data_path = tmp_path / "grpo.jsonl"
-        _write_grpo_jsonl(data_path, [sample])
+        data_path = tmp_path / "online_rl.jsonl"
+        _write_online_rl_jsonl(data_path, [sample])
 
         mock_registry = MagicMock()
         mock_registry.resolve_id.return_value = "eval-me"
@@ -413,8 +413,8 @@ class TestLoadChallengesWithRegistry:
             challenge_text="Some challenge",
             challenge_id="unknown-challenge",
         )
-        data_path = tmp_path / "grpo.jsonl"
-        _write_grpo_jsonl(data_path, [sample])
+        data_path = tmp_path / "online_rl.jsonl"
+        _write_online_rl_jsonl(data_path, [sample])
 
         mock_registry = MagicMock()
         mock_registry.resolve_id.return_value = None
@@ -997,8 +997,8 @@ class TestChallengeRegistryIntegration:
             challenge_text="Solve this challenge",
             challenge_id=challenge.id,
         )
-        data_path = tmp_path / "grpo.jsonl"
-        _write_grpo_jsonl(data_path, [sample])
+        data_path = tmp_path / "online_rl.jsonl"
+        _write_online_rl_jsonl(data_path, [sample])
 
         mock_dspy = MagicMock()
         mock_dspy.Example = _MockExample

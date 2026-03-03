@@ -3,10 +3,10 @@
 Uses DSPy's GEPA optimizer (Genetic-Pareto reflective prompt evolution)
 to evolve the CTF agent's system prompt without weight updates.
 
-Pipeline position: SFT -> GRPO -> **GEPA** -> Deploy
+Pipeline position: SFT -> Online RL -> **GEPA** -> Deploy
 
 - SFT teaches format and domain knowledge (weight updates)
-- GRPO optimizes tool-calling efficiency (weight updates)
+- Online RL optimizes tool-calling efficiency (weight updates)
 - GEPA evolves the system prompt instructions (no weight updates)
 
 How GEPA improves over time:
@@ -20,7 +20,7 @@ The reflection LM defaults to the same model as the agent. Both can run
 on a local vLLM server — no cloud APIs required. For better mutations,
 serve a stronger model for reflection on a separate port.
 
-Outperforms GRPO by ~6% avg with 4-35x fewer rollouts (ICLR 2026 Oral).
+Outperforms Online RL by ~6% avg with 4-35x fewer rollouts (ICLR 2026 Oral).
 
 Tools execute via ToolExecutor (direct subprocess, no HTTP server needed).
 
@@ -231,7 +231,7 @@ def _load_challenges(
     max_samples: int | None = None,
     registry=None,
 ) -> list:
-    """Load challenges from GRPO JSONL as DSPy Examples.
+    """Load challenges from Online RL JSONL as DSPy Examples.
 
     Each example contains:
     - ``challenge``: The CTF challenge description (from user message)
@@ -241,7 +241,7 @@ def _load_challenges(
     - ``challenge_id``: Canonical challenge ID (if resolvable)
 
     Args:
-        data_path: Path to GRPO JSONL file.
+        data_path: Path to Online RL JSONL file.
         max_samples: Maximum examples to load.
         registry: Optional ChallengeRegistry for target URL resolution.
     """
@@ -300,6 +300,199 @@ def _load_challenges(
 # ---------------------------------------------------------------------------
 # Agent -> DSPy Module adapter (for --agent flag)
 # ---------------------------------------------------------------------------
+
+
+class CTFAgentDSPyAdapter:
+    """Wrap a BYO Agent (e.g. BoxPwnrAgent) as a DSPy-compatible module.
+
+    GEPA evolves the system prompt; this adapter forwards the evolved prompt
+    to the agent's ``solve()`` method via the ``custom_instructions`` kwarg.
+
+    BoxPwnr (and other BYO agents) treat ``challenge`` as a target identifier,
+    not a prompt -- so we must NOT prepend the evolved prompt to the challenge
+    text.  Instead, we pass it separately as ``custom_instructions``.
+
+    DSPy GEPA calls ``forward(challenge=...)`` on this adapter.  The adapter
+    delegates to ``agent.solve(challenge, target, ..., custom_instructions=...)``.
+
+    Implements the minimal DSPy module surface:
+    - ``forward()`` — called by GEPA evaluator
+    - ``named_predictors()`` — GEPA reads/writes evolved instructions here
+    - ``deepcopy()`` / ``reset_copy()`` / ``__deepcopy__()`` — GEPA clones
+    - ``save()`` / ``load()`` — GEPA persists candidates
+    """
+
+    def __init__(
+        self,
+        agent,
+        seed_prompt: str = "",
+        challenge_flags: dict[str, str] | None = None,
+        challenge_ids: dict[str, str] | None = None,
+        solve_kwargs: dict[str, Any] | None = None,
+    ):
+        self._agent = agent
+        self._seed_prompt = seed_prompt
+        self._challenge_flags = challenge_flags or {}
+        # Mapping from challenge text (first 128 chars) to challenge_id.
+        # Used by forward() to resolve the challenge identifier that BYO
+        # agents (e.g. BoxPwnr) need as the ``challenge`` parameter.
+        self._challenge_ids = challenge_ids or {}
+        # Extra kwargs forwarded to agent.solve() (e.g. timeout, max_steps).
+        self._solve_kwargs = solve_kwargs or {}
+        # Mutable instruction that GEPA evolves via named_predictors().
+        self._evolved_prompt = seed_prompt
+
+    def _resolve_challenge_id(self, challenge_text: str) -> str:
+        """Resolve challenge identifier from challenge text.
+
+        BYO agents (e.g. BoxPwnr) expect a challenge name like
+        ``"[Very Easy] Flag Command"`` not the full prompt text.
+        DSPy only passes input fields to forward(), so challenge_id
+        (a non-input field) must be resolved from a pre-built mapping.
+        """
+        key = challenge_text[:128]
+        if key in self._challenge_ids:
+            return self._challenge_ids[key]
+        # Fallback: return the original text (non-BoxPwnr agents may accept it)
+        return challenge_text
+
+    def __call__(self, challenge: str = "", **kwargs):
+        """DSPy evaluator calls program(**inputs) — delegate to forward()."""
+        return self.forward(challenge=challenge, **kwargs)
+
+    def forward(self, challenge: str = "", **kwargs):
+        """Run the BYO agent on a challenge, forwarding evolved prompt."""
+        import dspy
+
+        target = kwargs.get("target", "")
+        if not target:
+            target = _extract_first_url(challenge) or ""
+
+        gt_flag = kwargs.get("ground_truth_flag", "")
+        if not gt_flag:
+            gt_flag = self._resolve_ground_truth(challenge, target)
+
+        evolved_prompt = self._evolved_prompt or ""
+
+        # Resolve the challenge identifier for BYO agents that need a
+        # short name (e.g. BoxPwnr CybenchPlatform), not the full prompt.
+        challenge_id = kwargs.get("challenge_id") or self._resolve_challenge_id(challenge)
+
+        result = self._agent.solve(
+            challenge=challenge_id,
+            target=target,
+            ground_truth_flag=gt_flag,
+            custom_instructions=evolved_prompt,
+            **self._solve_kwargs,
+        )
+
+        # Build a DSPy Prediction with trajectory info for the metric.
+        trajectory = {}
+        for i, msg in enumerate(result.messages):
+            role = msg.get("role", "")
+            content = msg.get("content", "")
+            if role == "assistant":
+                # Extract tool calls if present
+                tool_calls = msg.get("tool_calls", [])
+                for j, tc in enumerate(tool_calls):
+                    fn = tc.get("function", {})
+                    trajectory[f"tool_name_{i}_{j}"] = fn.get("name", "")
+                    trajectory[f"tool_args_{i}_{j}"] = fn.get("arguments", {})
+            elif role in ("tool", "user"):
+                trajectory[f"observation_{i}"] = content
+
+        return dspy.Prediction(
+            answer=result.flag or "",
+            trajectory=trajectory,
+        )
+
+    def _resolve_ground_truth(self, challenge: str, target: str) -> str:
+        """Resolve ground-truth flag from target URL or challenge text."""
+        if target and target in self._challenge_flags:
+            return self._challenge_flags[target]
+        for key, flag in self._challenge_flags.items():
+            if key.startswith("http://") or key.startswith("https://"):
+                continue
+            if key in challenge:
+                return flag
+        flags = list(set(self._challenge_flags.values()))
+        if len(flags) == 1:
+            return flags[0]
+        return ""
+
+    # -- DSPy module interface for GEPA ------------------------------------
+
+    def named_predictors(self):
+        """Yield a single synthetic predictor so GEPA can read/write instructions."""
+        return [("agent", self)]
+
+    @property
+    def signature(self):
+        """Synthetic signature exposing the evolved instructions to GEPA."""
+        return _MutableSignature(self._evolved_prompt)
+
+    @signature.setter
+    def signature(self, value):
+        if hasattr(value, "instructions"):
+            self._evolved_prompt = value.instructions
+
+    def deepcopy(self):
+        import copy
+
+        clone = CTFAgentDSPyAdapter(
+            agent=copy.deepcopy(self._agent),
+            seed_prompt=self._seed_prompt,
+            challenge_flags=self._challenge_flags.copy(),
+            challenge_ids=self._challenge_ids.copy(),
+            solve_kwargs=self._solve_kwargs.copy(),
+        )
+        clone._evolved_prompt = self._evolved_prompt
+        return clone
+
+    def reset_copy(self):
+        import copy
+
+        clone = CTFAgentDSPyAdapter(
+            agent=copy.deepcopy(self._agent),
+            seed_prompt=self._seed_prompt,
+            challenge_flags=self._challenge_flags.copy(),
+            challenge_ids=self._challenge_ids.copy(),
+            solve_kwargs=self._solve_kwargs.copy(),
+        )
+        clone._evolved_prompt = self._seed_prompt  # reset to seed
+        return clone
+
+    def __deepcopy__(self, memo):
+        import copy
+
+        clone = CTFAgentDSPyAdapter(
+            agent=copy.deepcopy(self._agent, memo),
+            seed_prompt=self._seed_prompt,
+            challenge_flags=self._challenge_flags.copy(),
+            challenge_ids=self._challenge_ids.copy(),
+            solve_kwargs=self._solve_kwargs.copy(),
+        )
+        clone._evolved_prompt = self._evolved_prompt
+        return clone
+
+    def save(self, path: str):
+        """Persist evolved prompt to disk."""
+        Path(path).write_text(json.dumps({"evolved_prompt": self._evolved_prompt}))
+
+    def load(self, path: str):
+        """Restore evolved prompt from disk."""
+        data = json.loads(Path(path).read_text())
+        self._evolved_prompt = data.get("evolved_prompt", self._seed_prompt)
+
+
+class _MutableSignature:
+    """Minimal stand-in for dspy.Signature so GEPA can read/write instructions."""
+
+    def __init__(self, instructions: str = ""):
+        self.instructions = instructions
+
+    def with_instructions(self, instructions: str):
+        return _MutableSignature(instructions)
 
 
 # ---------------------------------------------------------------------------
@@ -440,16 +633,15 @@ def run_gepa(
         val_data_path: Optional separate validation data path.
         max_samples: Maximum number of training examples to load.
         challenge_registry: Path to challenge registry YAML.
-        agent_class: Reserved for future BYO agent support (not yet implemented).
+        agent_class: Dotted path to a BYO Agent class (e.g.
+            ``trajgym.integrations.boxpwnr_adapter.BoxPwnrAgent``).
+            The class must implement ``solve(challenge, target, ground_truth_flag,
+            custom_instructions=...)`` per the Agent protocol. GEPA evolves the
+            system prompt and forwards it via ``custom_instructions``.
 
     Returns:
         Path to saved optimized prompt file.
     """
-    if agent_class:
-        raise NotImplementedError(
-            "BYO agent support via --agent is not yet implemented for GEPA. "
-            "Use DSPy ReAct (default) instead."
-        )
     import dspy
     from dspy.teleprompt.gepa import GEPA
 
@@ -467,6 +659,8 @@ def run_gepa(
     logger.info("  Output:     %s", output_dir)
     if challenge_registry:
         logger.info("  Registry:   %s", challenge_registry)
+    if agent_class:
+        logger.info("  Agent:      %s", agent_class)
     logger.info("=" * 60)
 
     out_dir = Path(output_dir)
@@ -569,46 +763,83 @@ def run_gepa(
         elif preset_name != "default":
             logger.info("Using seed prompt preset: %s", preset_name)
 
-    # --- Build DSPy ReAct agent with ToolExecutor tools ---------------------
-    from trajgym.training.tool_wrappers import get_all_tools, init_env
-
-    stdout_limit = gepa_cfg.get("max_tool_response_chars", 16000)
-    init_env(stdout_limit=stdout_limit)
-    tools = get_all_tools()
-    logger.info(
-        "Tools initialized (%d tools, stdout_limit=%d)", len(tools), stdout_limit
-    )
-
-    class AgentSignature(dspy.Signature):
-        """Placeholder instructions (replaced by seed prompt below)."""
-
-        challenge: str = dspy.InputField(
-            desc="CTF challenge description and target information",
-        )
-        answer: str = dspy.OutputField(
-            desc="The captured flag or final answer",
-        )
-
-    inner_react = dspy.ReAct(
-        signature=AgentSignature.with_instructions(seed),
-        tools=tools,
-        max_iters=gepa_cfg.get("max_iters", 15),
-    )
-
-    # Build target→ground_truth lookup so the wrapper can initialize the
-    # ToolExecutor with the correct flag BEFORE each ReAct episode.
+    # Build target->ground_truth and challenge_text->challenge_id lookups.
     challenge_flags = {}
+    challenge_ids = {}
     for ex in trainset:
         target = ex.get("target", "")
         gt = ex.get("ground_truth_flag", "")
         challenge_text = ex.get("challenge", "")
+        challenge_id = ex.get("challenge_id", "")
         if gt:
             if target:
                 challenge_flags[target] = gt
             if challenge_text:
                 challenge_flags[challenge_text[:128]] = gt
+        if challenge_id and challenge_text:
+            challenge_ids[challenge_text[:128]] = challenge_id
 
-    agent = _EnvAwareReAct(inner_react, challenge_flags)
+    if agent_class:
+        # --- BYO Agent path (e.g. BoxPwnr) --------------------------------
+        # Load the agent class dynamically and wrap it in CTFAgentDSPyAdapter.
+        # GEPA evolves the seed prompt and forwards it as custom_instructions
+        # to the agent's solve() method on every evaluation episode.
+        import importlib
+
+        parts = agent_class.rsplit(".", 1)
+        if len(parts) == 2:
+            mod = importlib.import_module(parts[0])
+            AgentCls = getattr(mod, parts[1])
+        else:
+            raise ValueError(
+                f"agent_class must be a dotted path (e.g. 'module.ClassName'), "
+                f"got: {agent_class!r}"
+            )
+
+        agent_kwargs = gepa_cfg.get("agent_kwargs", {})
+        ctf_agent = AgentCls(**agent_kwargs)
+        logger.info(
+            "BYO agent loaded: %s (kwargs keys: %s)",
+            agent_class,
+            list(agent_kwargs.keys()) if agent_kwargs else "none",
+        )
+
+        solve_kwargs = gepa_cfg.get("agent_solve_kwargs", {})
+        agent = CTFAgentDSPyAdapter(
+            agent=ctf_agent,
+            seed_prompt=seed,
+            challenge_flags=challenge_flags,
+            challenge_ids=challenge_ids,
+            solve_kwargs=solve_kwargs,
+        )
+    else:
+        # --- Default DSPy ReAct agent with ToolExecutor tools --------------
+        from trajgym.training.tool_wrappers import get_all_tools, init_env
+
+        stdout_limit = gepa_cfg.get("max_tool_response_chars", 16000)
+        init_env(stdout_limit=stdout_limit)
+        tools = get_all_tools()
+        logger.info(
+            "Tools initialized (%d tools, stdout_limit=%d)", len(tools), stdout_limit
+        )
+
+        class AgentSignature(dspy.Signature):
+            """Placeholder instructions (replaced by seed prompt below)."""
+
+            challenge: str = dspy.InputField(
+                desc="CTF challenge description and target information",
+            )
+            answer: str = dspy.OutputField(
+                desc="The captured flag or final answer",
+            )
+
+        inner_react = dspy.ReAct(
+            signature=AgentSignature.with_instructions(seed),
+            tools=tools,
+            max_iters=gepa_cfg.get("max_iters", 15),
+        )
+
+        agent = _EnvAwareReAct(inner_react, challenge_flags)
 
     # --- Build metric ------------------------------------------------------
     reward_fn = Reward(

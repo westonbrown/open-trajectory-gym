@@ -2,7 +2,7 @@
 """Generate Online RL dataset from Cybench registry.
 
 Reads the Cybench YAML registry, connects it to reachable targets (via target map),
-and generates the initial dataset JSONL needed by GRPO.
+and generates the initial dataset JSONL needed by Online RL.
 
 Usage:
   python src/trajgym/cli/generate_online_rl.py \

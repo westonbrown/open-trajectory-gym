@@ -2,7 +2,7 @@
 
 Validates:
 - All YAML configs load without error
-- SkyRL GRPO configs have required fields
+- SkyRL Online RL configs have required fields
 - Config values are reasonable (batch sizes, learning rates, etc.)
 """
 
@@ -26,10 +26,10 @@ def _load_yaml(path: Path) -> dict:
 
 
 class TestSkyRLGRPOConfigs:
-    GRPO_DIR = PROJECT_ROOT / "src" / "trajgym" / "training" / "grpo_templates"
+    GRPO_DIR = PROJECT_ROOT / "src" / "trajgym" / "training" / "online_rl_templates"
 
-    def test_grpo_dir_exists(self):
-        assert self.GRPO_DIR.exists(), f"GRPO config dir not found: {self.GRPO_DIR}"
+    def test_online_rl_dir_exists(self):
+        assert self.GRPO_DIR.exists(), f"ONLINE_RL config dir not found: {self.GRPO_DIR}"
 
     @pytest.fixture(
         params=[
@@ -79,7 +79,7 @@ class TestSkyRLGRPOConfigs:
         cfg, name = grpo_config
         gen = cfg.get("generator", {})
         n = gen.get("n_samples_per_prompt", 0)
-        assert n >= 2, f"{name} n_samples_per_prompt={n} should be >= 2 for GRPO"
+        assert n >= 2, f"{name} n_samples_per_prompt={n} should be >= 2 for ONLINE_RL"
 
     def test_max_turns_set(self, grpo_config):
         cfg, name = grpo_config
@@ -91,10 +91,10 @@ class TestSkyRLGRPOConfigs:
         cfg, name = grpo_config
         algo = cfg.get("trainer", {}).get("algorithm", {})
         assert algo.get("advantage_estimator") in (
-            "grpo",
+            "online_rl",
             "rloo",
             "rloo_n",
-        ), f"{name} should use GRPO, RLOO, or RLOO-N advantage estimator"
+        ), f"{name} should use ONLINE_RL, RLOO, or RLOO-N advantage estimator"
 
 
 # ---------------------------------------------------------------------------

@@ -147,7 +147,7 @@ def per_step_reward(
     step_tool_call_count: int = 0,
     step_wise: bool = False,
 ) -> float:
-    """Per-step reward during GRPO rollouts.
+    """Per-step reward during Online RL rollouts.
 
     When step_wise=False (default), returns 0.0 for all non-terminal steps.
     All reward signal comes from the terminal Reward computation.

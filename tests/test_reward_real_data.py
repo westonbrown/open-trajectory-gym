@@ -19,8 +19,8 @@ from trajgym.rewards.reward import Reward
 # ---------------------------------------------------------------------------
 
 ONLINE_RL_PATHS = [
+    Path(__file__).parent.parent / "data" / "sft.jsonl",
     Path(__file__).parent.parent / "data" / "online_rl.jsonl",
-    Path(__file__).parent.parent / "data" / "online_rl_quality.jsonl",
     Path(__file__).parent.parent / "data" / "online_rl_pre_clean.jsonl",
 ]
 

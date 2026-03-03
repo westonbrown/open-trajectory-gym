@@ -1,8 +1,9 @@
 """Model-agnostic tool call parsing for LLM output text.
 
-Extracts structured tool calls from raw assistant text across 5 formats:
+Extracts structured tool calls from raw assistant text across 6 formats:
   1. Hermes/Qwen3/Nanbeige JSON: <tool_call>{"name":..., "arguments":...}</tool_call>
   2. Qwen3.5 Coder XML: <tool_call><function=name><parameter=k>v</parameter></function></tool_call>
+  2b. Qwen3.5 Coder XML (bare func): <tool_call>name<parameter=k>v</parameter></tool_call>
   3. GLM-4 MoE XML: <tool_call>func<arg_key>k</arg_key><arg_value>v</arg_value></tool_call>
   4. Bare JSON fallback: {"name": "...", "arguments": {...}}
   5. Python-style calls: shell_command(command="ls -la")
@@ -51,6 +52,14 @@ _QWEN35_PARAM_PATTERN = re.compile(
 # Captures function name and first parameter even without closing tags.
 _QWEN35_CODER_TRUNCATED_PATTERN = re.compile(
     r"<tool_call>\s*<function=([^>]+)>\s*<parameter=([^>]+)>(.*)",
+    re.DOTALL,
+)
+
+# Bare-function-name variant: <tool_call>func_name<parameter=k>v</parameter>...</tool_call>
+# Some models (e.g. Qwen3.5-9B SFT) drop the <function=...> wrapper but still use
+# <parameter=...> tags.  Matches with optional </function> before </tool_call>.
+_QWEN35_CODER_BARE_FUNC_PATTERN = re.compile(
+    r"<tool_call>\s*([A-Za-z_]\w+)\s*((?:<parameter=[^>]+>.*?</parameter>\s*)*)\s*(?:</function>)?\s*</tool_call>",
     re.DOTALL,
 )
 
@@ -142,6 +151,22 @@ def _parse_call_arguments(name: str, args_src: str) -> dict[str, Any]:
         key = ordered[0] if ordered else "arg0"
         args[key] = _coerce_scalar(args_src)
     return args
+
+
+# Mapping from common model-generated parameter aliases to canonical names.
+_PARAM_ALIASES: dict[str, dict[str, str]] = {
+    "shell_command": {"param": "command", "cmd": "command", "input": "command"},
+    "execute_command": {"param": "command", "cmd": "command", "input": "command"},
+    "python_code": {"param": "code", "script": "code"},
+    "flag_found": {"flag": "content", "value": "content", "submission": "content"},
+    "submit_flag": {"flag": "content", "value": "content", "submission": "content"},
+    "read_file": {"path": "file_path", "file": "file_path", "param": "file_path"},
+}
+
+
+def _normalize_param(tool_name: str, key: str) -> str:
+    """Remap a model-generated parameter name to its canonical form."""
+    return _PARAM_ALIASES.get(tool_name, {}).get(key, key)
 
 
 def _looks_like_placeholder_tool_call(name: str, args: dict[str, Any]) -> bool:
@@ -238,22 +263,44 @@ def _parse_hermes_json(text: str) -> list[dict[str, Any]]:
 def _parse_qwen35_coder_xml(text: str) -> list[dict[str, Any]]:
     """Parse Qwen3.5 Coder XML: <tool_call><function=name><parameter=k>v</parameter></function></tool_call>.
 
-    Also handles truncated tool calls where max_completion_length cut off
-    the output before the closing tags were generated. The LAST unclosed
-    ``<tool_call>`` in the text is recovered via a lenient fallback regex.
+    Also handles:
+    - Bare-function-name variant: ``<tool_call>func_name<parameter=k>v</parameter></tool_call>``
+      (9B models often drop the ``<function=...>`` wrapper after SFT)
+    - Truncated tool calls where max_completion_length cut off
+      the output before the closing tags were generated.
     """
     calls = []
     for m in _QWEN35_CODER_PATTERN.finditer(text):
         name = m.group(1).strip()
         args = {}
         for pm in _QWEN35_PARAM_PATTERN.finditer(m.group(2)):
-            key = pm.group(1).strip()
+            key = _normalize_param(name, pm.group(1).strip())
             val = pm.group(2).strip()
             with contextlib.suppress(ValueError, json.JSONDecodeError):
                 val = json.loads(val)
             args[key] = val
         if name in _KNOWN_TOOL_NAMES:
             calls.append({"name": name, "arguments": args})
+
+    # Bare-function-name fallback: <tool_call>func_name<parameter=k>v</parameter>...</tool_call>
+    # Models (especially 9B SFT) sometimes drop <function=...> but keep <parameter=...>.
+    if not calls:
+        for m in _QWEN35_CODER_BARE_FUNC_PATTERN.finditer(text):
+            name = m.group(1).strip()
+            args = {}
+            for pm in _QWEN35_PARAM_PATTERN.finditer(m.group(2)):
+                key = _normalize_param(name, pm.group(1).strip())
+                val = pm.group(2).strip()
+                with contextlib.suppress(ValueError, json.JSONDecodeError):
+                    val = json.loads(val)
+                args[key] = val
+            if name in _KNOWN_TOOL_NAMES:
+                calls.append({"name": name, "arguments": args})
+                logger.debug(
+                    "Recovered bare-func qwen3_coder tool call: %s(%s)",
+                    name,
+                    list(args.keys()),
+                )
 
     # Truncation recovery: if the text has more <tool_call> opens than
     # closes, the last tool call was likely truncated by max_completion_length.

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -12,12 +13,15 @@ ADAPTER = REPO_ROOT / "examples" / "bring-your-own" / "agent" / "boxpwnr_adapter
 
 
 def _run_adapter(payload: dict) -> subprocess.CompletedProcess[str]:
+    env = dict(os.environ)
+    env["PYTHONPATH"] = str(REPO_ROOT / "src")
     return subprocess.run(
         [sys.executable, str(ADAPTER)],
         input=json.dumps(payload),
         text=True,
         capture_output=True,
         check=False,
+        env=env,
     )
 
 

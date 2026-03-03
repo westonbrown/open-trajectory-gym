@@ -1,4 +1,4 @@
-"""Structured trajectory logging for GRPO training post-run analysis.
+"""Structured trajectory logging for Online RL training post-run analysis.
 
 Provides per-generation JSONL logging, step summaries, and a challenge
 scoreboard so that after a training run you can:
@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 
 
 class TrajectoryLogger:
-    """Saves per-generation GRPO data as structured JSONL.
+    """Saves per-generation Online RL data as structured JSONL.
 
     Thread-safe: multiple SkyRL env workers may call log_generation()
     concurrently from different threads.

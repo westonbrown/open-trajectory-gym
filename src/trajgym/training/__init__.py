@@ -4,7 +4,7 @@ Imports are lazy to avoid requiring all dependencies (e.g. trl,
 skyrl, dspy) when only one training stage is used.
 
 SFT:  TRL-based supervised fine-tuning
-online RL: SkyRL-based online reinforcement learning (GRPO/RLOO variants)
+online RL: SkyRL-based online reinforcement learning (Online RL/RLOO variants)
 GEPA: DSPy-based prompt evolution (no weight updates)
 """
 

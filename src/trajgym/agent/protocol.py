@@ -1,6 +1,6 @@
 """Agent protocol — minimal interface for pluggable agents.
 
-SkyRL owns generation during GRPO training. This protocol is for:
+SkyRL owns generation during Online RL training. This protocol is for:
   - Evaluation (trajgym-eval)
   - GEPA trace collection
   - Standalone agent runs (trajgym-agent)
@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# StepAgent — pluggable tool-execution agent for GRPO training loop
+# StepAgent — pluggable tool-execution agent for Online RL training loop
 # ---------------------------------------------------------------------------
 
 
@@ -39,9 +39,9 @@ class StepResult:
 
 @runtime_checkable
 class StepAgent(Protocol):
-    """Pluggable agent for the GRPO training loop.
+    """Pluggable agent for the Online RL training loop.
 
-    During GRPO training, SkyRL owns generation (vLLM). The StepAgent
+    During Online RL training, SkyRL owns generation (vLLM). The StepAgent
     owns tool parsing + execution. This lets users swap in custom tool
     handlers, different parsing logic, or entirely different execution
     backends without touching the env or reward code.

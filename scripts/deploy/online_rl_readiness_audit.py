@@ -219,17 +219,16 @@ def main() -> int:
     parser.add_argument("--run-root", required=True)
     parser.add_argument(
         "--registry",
-        default="/workspace/open-trajectory-gym/configs/challenges/cybench.yaml",
+        default="configs/challenges/cybench.yaml",
     )
     parser.add_argument(
         "--target-map",
-        default="/workspace/open-trajectory-gym/configs/challenges/cybench_target_map_runpod.json",
+        default="configs/challenges/cybench_target_map_runpod.json",
     )
     parser.add_argument(
-        "--online-rl-cybench", "--grpo-cybench", dest="online_rl_cybench", default=None
-    )
-    parser.add_argument(
-        "--online-rl-quality", "--grpo-quality", dest="online_rl_quality", default=None
+        "--online-rl-data",
+        default="data/online_rl.jsonl",
+        help="Path to online RL JSONL dataset",
     )
     args = parser.parse_args()
 
@@ -251,22 +250,7 @@ def main() -> int:
         else:
             reach_bad.append((str(cid), str(target), reason))
 
-    online_rl_cybench = (
-        Path(args.online_rl_cybench)
-        if args.online_rl_cybench
-        else _pick_existing(
-            Path("/workspace/open-trajectory-gym/data/online_rl_cybench40.jsonl"),
-            Path("/workspace/open-trajectory-gym/data/grpo_cybench40.jsonl"),
-        )
-    )
-    online_rl_quality = (
-        Path(args.online_rl_quality)
-        if args.online_rl_quality
-        else _pick_existing(
-            Path("/workspace/open-trajectory-gym/data/online_rl_quality.jsonl"),
-            Path("/workspace/open-trajectory-gym/data/grpo_quality.jsonl"),
-        )
-    )
+    online_rl = Path(args.online_rl_data)
 
     report = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -280,8 +264,7 @@ def main() -> int:
         "target_map_reachable": len(reach_ok),
         "target_map_unreachable": len(reach_bad),
         "datasets": {
-            "online_rl_cybench40": _audit_dataset(online_rl_cybench, registry),
-            "online_rl_quality": _audit_dataset(online_rl_quality, registry),
+            "online_rl": _audit_dataset(online_rl, registry),
         },
         "unreachable_targets_sample": reach_bad[:10],
     }

@@ -1,4 +1,4 @@
-# SkyRL GRPO config for GPT-OSS 20B (MoE, colocated vLLM on B200)
+# SkyRL Online RL config for GPT-OSS 20B (MoE, colocated vLLM on B200)
 # Matches SkyRLConfig dataclass schema.
 # Used as reference — actual config is built by training/online_rl/runtime.py from archive/training_gptoss_20b.yaml.
 #

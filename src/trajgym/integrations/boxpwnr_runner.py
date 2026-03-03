@@ -207,6 +207,9 @@ class AgentRunner:
         self.reasoning_effort = reasoning_effort
         self.attempts = attempts
         self.custom_instructions = custom_instructions
+        # For cybench platform, use shared_net so Kali container can
+        # resolve challenge container hostnames via Docker DNS.
+        self.docker_network = "shared_net" if platform == "cybench" else "bridge"
 
     def check_setup(self) -> bool:
         """Verify BoxPwnr components can be imported.
@@ -250,6 +253,7 @@ class AgentRunner:
             default_timeout=30,
             max_timeout=300,
             use_interactive_sessions=(self.strategy_name == "chat_tools"),
+            docker_network=self.docker_network,
         )
 
         # Create platform

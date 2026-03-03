@@ -1,4 +1,4 @@
-# SkyRL GRPO config for Qwen/Qwen3.5-27B (27B dense, local non-colocated vLLM)
+# SkyRL Online RL config for Qwen/Qwen3.5-27B (27B dense, local non-colocated vLLM)
 # Matches SkyRLConfig dataclass schema.
 # Used as reference — actual config is built by training/online_rl/runtime.py from training_qwen35_27b.yaml.
 #

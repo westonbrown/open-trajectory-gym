@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 
 def _build_system_prompt(manifest: WorldManifest) -> str:
-    """Build a system prompt matching the real BoxPwnr/sft_v6 format."""
+    """Build a system prompt matching the standard SFT format."""
     tool_descriptions = []
     for tool in AGENT_TOOLS:
         fn = tool["function"]
@@ -43,7 +43,7 @@ def _build_system_prompt(manifest: WorldManifest) -> str:
 
 
 def _build_user_prompt(manifest: WorldManifest) -> str:
-    """Build a user prompt with challenge context from the manifest, matching sft_v6 format."""
+    """Build a user prompt with challenge context from the manifest."""
     # Collect unique hosts
     seen = {}
     for h in manifest.hosts.values():
@@ -114,7 +114,7 @@ def _build_user_prompt(manifest: WorldManifest) -> str:
 
 
 def _sanitize_assistant_message(msg_dict: dict[str, Any]) -> dict[str, Any]:
-    """Post-process an assistant message from LiteLLM into sft_v6-compatible format.
+    """Post-process an assistant message from LiteLLM into training-compatible format.
 
     - Converts reasoning_content / provider_specific_fields.reasoning into <think> blocks
     - Strips provider-specific fields

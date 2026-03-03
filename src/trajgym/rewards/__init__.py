@@ -1,4 +1,4 @@
-"""CTF reward functions for GRPO training."""
+"""CTF reward functions for Online RL training."""
 
 from .reward import Reward
 

@@ -209,7 +209,7 @@ def main() -> None:
         default=None,
         help=(
             "Path to online RL JSONL for preflight "
-            "(default: data/online_rl_quality.jsonl, fallback: data/online_rl_cybench40.jsonl)"
+            "(default: data/online_rl.jsonl)"
         ),
     )
     parser.add_argument(
@@ -271,10 +271,7 @@ def main() -> None:
         ),
         (
             "ONLINE RL",
-            _first_existing_path(
-                DATA_DIR / "online_rl_quality.jsonl",
-                DATA_DIR / "online_rl.jsonl",
-            ),
+            DATA_DIR / "online_rl.jsonl",
         ),
     ]
 
@@ -316,7 +313,7 @@ def main() -> None:
         else:
             _ok(f"{label}: Format validated (first 5 lines)")
 
-        # Check for ground_truth_flag in GRPO data
+        # Check for ground_truth_flag in Online RL data
         if "online rl" in label.lower():
             try:
                 first = json.loads(lines[0])
@@ -653,10 +650,7 @@ def main() -> None:
         online_rl_data = (
             Path(args.online_rl_data)
             if args.online_rl_data
-            else _first_existing_path(
-                DATA_DIR / "online_rl_quality.jsonl",
-                DATA_DIR / "online_rl_cybench40.jsonl",
-            )
+            else DATA_DIR / "online_rl.jsonl"
         )
         if online_rl_data.exists():
             try:

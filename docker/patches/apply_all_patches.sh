@@ -50,6 +50,12 @@ run_patch "ray_collective_compat" optional python3 "$PATCH_DIR/patch_ray_collect
 # 9. flash_attn stub (real flash_attn not compiled for target GPU arch)
 run_patch "flash_attn_stub" optional python3 "$PATCH_DIR/patch_flash_attn_stub.py"
 
+# --- SkyRL generator ---
+
+# 48. Post-retokenization prompt length guard (prevents vLLM crash when
+#     re-tokenized input_ids exceed max_input_length after custom template)
+run_patch "skyrl_prompt_length_guard" critical python3 "$PATCH_DIR/patch_skyrl_prompt_length_guard.py"
+
 # --- SkyRL dataloader ---
 
 # 10. Disable dataloader shuffle for progressive difficulty ordering

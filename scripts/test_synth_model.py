@@ -112,7 +112,7 @@ def grade_manifest_adherence(trace: dict, manifest: WorldManifest) -> dict:
                 tool_names.add(tc["function"]["name"])
     scores["tool_diversity"] = min(1.0, len(tool_names) / 4)  # 4+ tools = perfect
 
-    # 8. Trajectory Length: Prefer 8-30 messages (like sft_v6 averages)
+    # 8. Trajectory Length: Prefer 8-30 messages (typical SFT averages)
     n = len(messages)
     if n < 6:
         scores["trajectory_length"] = 0.3

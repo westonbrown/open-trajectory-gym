@@ -1,7 +1,7 @@
-"""Smoke tests for SkyRL GRPO orchestrator.
+"""Smoke tests for SkyRL Online RL orchestrator.
 
 Validates:
-- _convert_online_rl_data correctly converts GRPO JSONL to SkyRL format
+- _convert_online_rl_data correctly converts Online RL JSONL to SkyRL format
 - _build_skyrl_config produces valid SkyRL config dict
 - Config has correct nesting (data.train_data, trainer.policy.model.path, etc.)
 """
@@ -28,12 +28,12 @@ from trajgym.training.online_rl.runtime import (
 )
 
 # ---------------------------------------------------------------------------
-# Sample GRPO data
+# Sample Online RL data
 # ---------------------------------------------------------------------------
 
 
-def _write_grpo_jsonl(path, samples=None):
-    """Write sample GRPO JSONL data."""
+def _write_online_rl_jsonl(path, samples=None):
+    """Write sample Online RL JSONL data."""
     if samples is None:
         samples = [
             {
@@ -80,14 +80,14 @@ def _write_grpo_jsonl(path, samples=None):
 # ---------------------------------------------------------------------------
 
 
-class TestConvertGRPOData:
+class TestConvertOnlineRLData:
     @staticmethod
     def _write_registry(path: Path, challenges: list[dict]) -> None:
         path.write_text(yaml.safe_dump({"challenges": challenges}))
 
     def test_output_file_created(self, tmp_path):
-        src = tmp_path / "grpo.jsonl"
-        _write_grpo_jsonl(src)
+        src = tmp_path / "online_rl.jsonl"
+        _write_online_rl_jsonl(src)
         output_dir = str(tmp_path / "out")
 
         result = _convert_online_rl_data(str(src), output_dir)
@@ -95,8 +95,8 @@ class TestConvertGRPOData:
         assert result.endswith("skyrl_online_rl_data.jsonl")
 
     def test_correct_number_of_samples(self, tmp_path):
-        src = tmp_path / "grpo.jsonl"
-        _write_grpo_jsonl(src)
+        src = tmp_path / "online_rl.jsonl"
+        _write_online_rl_jsonl(src)
         output_dir = str(tmp_path / "out")
 
         result = _convert_online_rl_data(str(src), output_dir)
@@ -107,8 +107,8 @@ class TestConvertGRPOData:
         assert len(rows) == 2
 
     def test_prompt_extracted(self, tmp_path):
-        src = tmp_path / "grpo.jsonl"
-        _write_grpo_jsonl(src)
+        src = tmp_path / "online_rl.jsonl"
+        _write_online_rl_jsonl(src)
         output_dir = str(tmp_path / "out")
 
         result = _convert_online_rl_data(str(src), output_dir)
@@ -126,8 +126,8 @@ class TestConvertGRPOData:
 
     def test_prompt_ends_with_user(self, tmp_path):
         """SkyRL requires prompt to end with a user message."""
-        src = tmp_path / "grpo.jsonl"
-        _write_grpo_jsonl(src)
+        src = tmp_path / "online_rl.jsonl"
+        _write_online_rl_jsonl(src)
         output_dir = str(tmp_path / "out")
 
         result = _convert_online_rl_data(str(src), output_dir)
@@ -138,8 +138,8 @@ class TestConvertGRPOData:
                 assert row["prompt"][-1]["role"] == "user"
 
     def test_env_class_set(self, tmp_path):
-        src = tmp_path / "grpo.jsonl"
-        _write_grpo_jsonl(src)
+        src = tmp_path / "online_rl.jsonl"
+        _write_online_rl_jsonl(src)
         output_dir = str(tmp_path / "out")
 
         result = _convert_online_rl_data(str(src), output_dir)
@@ -150,8 +150,8 @@ class TestConvertGRPOData:
                 assert row["env_class"] == "trajgym"
 
     def test_ground_truth_flag_preserved(self, tmp_path):
-        src = tmp_path / "grpo.jsonl"
-        _write_grpo_jsonl(src)
+        src = tmp_path / "online_rl.jsonl"
+        _write_online_rl_jsonl(src)
         output_dir = str(tmp_path / "out")
 
         result = _convert_online_rl_data(str(src), output_dir)
@@ -162,8 +162,8 @@ class TestConvertGRPOData:
         assert row["ground_truth_flag"] == "FLAG{test123}"
 
     def test_metadata_flattened(self, tmp_path):
-        src = tmp_path / "grpo.jsonl"
-        _write_grpo_jsonl(src)
+        src = tmp_path / "online_rl.jsonl"
+        _write_online_rl_jsonl(src)
         output_dir = str(tmp_path / "out")
 
         result = _convert_online_rl_data(str(src), output_dir)
@@ -177,7 +177,7 @@ class TestConvertGRPOData:
 
     def test_missing_user_message_gets_default(self, tmp_path):
         """If messages only have system + assistant, a default user msg is added."""
-        src = tmp_path / "grpo.jsonl"
+        src = tmp_path / "online_rl.jsonl"
         import jsonlines
 
         with jsonlines.open(str(src), "w") as w:
@@ -203,8 +203,8 @@ class TestConvertGRPOData:
         assert "flag" in row["prompt"][-1]["content"].lower()
 
     def test_registry_filter_drops_unresolved_samples(self, tmp_path):
-        src = tmp_path / "grpo.jsonl"
-        _write_grpo_jsonl(
+        src = tmp_path / "online_rl.jsonl"
+        _write_online_rl_jsonl(
             src,
             samples=[
                 {
@@ -257,8 +257,8 @@ class TestConvertGRPOData:
 
     def test_drop_static_challenges_filters_static_infra(self, tmp_path):
         """Samples with infra_type='static' should be dropped when flag is set."""
-        src = tmp_path / "grpo.jsonl"
-        _write_grpo_jsonl(
+        src = tmp_path / "online_rl.jsonl"
+        _write_online_rl_jsonl(
             src,
             samples=[
                 {
@@ -338,8 +338,8 @@ class TestConvertGRPOData:
 
     def test_drop_static_challenges_disabled_keeps_all(self, tmp_path):
         """When drop_static_challenges=False, static samples should be kept."""
-        src = tmp_path / "grpo.jsonl"
-        _write_grpo_jsonl(
+        src = tmp_path / "online_rl.jsonl"
+        _write_online_rl_jsonl(
             src,
             samples=[
                 {
@@ -383,8 +383,8 @@ class TestConvertGRPOData:
         assert rows[0]["challenge_id"] == "static-chall"
 
     def test_registry_resolves_alias_to_canonical_id(self, tmp_path):
-        src = tmp_path / "grpo.jsonl"
-        _write_grpo_jsonl(
+        src = tmp_path / "online_rl.jsonl"
+        _write_online_rl_jsonl(
             src,
             samples=[
                 {
@@ -430,8 +430,8 @@ class TestConvertGRPOData:
         assert row["target"] == "http://localhost:32805"
 
     def test_registry_flag_mismatch_raises_when_enabled(self, tmp_path):
-        src = tmp_path / "grpo.jsonl"
-        _write_grpo_jsonl(
+        src = tmp_path / "online_rl.jsonl"
+        _write_online_rl_jsonl(
             src,
             samples=[
                 {
@@ -470,8 +470,8 @@ class TestConvertGRPOData:
             )
 
     def test_registry_flag_mismatch_uses_registry_when_not_failing(self, tmp_path):
-        src = tmp_path / "grpo.jsonl"
-        _write_grpo_jsonl(
+        src = tmp_path / "online_rl.jsonl"
+        _write_online_rl_jsonl(
             src,
             samples=[
                 {
@@ -514,8 +514,8 @@ class TestConvertGRPOData:
         assert row["ground_truth_flag"] == "FLAG{registry}"
 
     def test_missing_registry_flag_raises_when_enabled(self, tmp_path):
-        src = tmp_path / "grpo.jsonl"
-        _write_grpo_jsonl(
+        src = tmp_path / "online_rl.jsonl"
+        _write_online_rl_jsonl(
             src,
             samples=[
                 {
@@ -553,8 +553,8 @@ class TestConvertGRPOData:
             )
 
     def test_require_all_registry_challenges_raises_when_missing(self, tmp_path):
-        src = tmp_path / "grpo.jsonl"
-        _write_grpo_jsonl(
+        src = tmp_path / "online_rl.jsonl"
+        _write_online_rl_jsonl(
             src,
             samples=[
                 {
@@ -863,7 +863,7 @@ class TestBuildSkyrlConfig:
         assert algo["eps_clip_high"] == 0.12
 
     def test_missing_grpo_section_uses_defaults(self):
-        """Config without grpo section should still produce valid output."""
+        """Config without online RL section should still produce valid output."""
         config = {
             "model": {"max_seq_length": 4096},
             "lora": {
@@ -878,7 +878,7 @@ class TestBuildSkyrlConfig:
         assert isinstance(result, dict)
         assert "trainer" in result
         assert "generator" in result
-        # Should have sensible defaults for GRPO params
+        # Should have sensible defaults for Online RL params
         assert result["generator"]["n_samples_per_prompt"] >= 1
 
     def test_environment_env_class_always_trajgym(self):
@@ -1107,7 +1107,7 @@ class TestTargetExtraction:
         assert row["target"] == "http://localhost:9999"
 
 
-class TestConvertGRPODataEdgeCases:
+class TestConvertOnlineRLDataEdgeCases:
     def test_data_without_ground_truth_flag(self, tmp_path):
         """Samples without ground_truth_flag should still convert."""
         src = tmp_path / "no_flag.jsonl"
@@ -1194,7 +1194,7 @@ class TestRegistryIntegration:
         """Registry should provide target URL when not in user message."""
         registry = self._make_registry(tmp_path)
 
-        src = tmp_path / "grpo.jsonl"
+        src = tmp_path / "online_rl.jsonl"
         import jsonlines
 
         with jsonlines.open(str(src), "w") as w:
@@ -1219,7 +1219,7 @@ class TestRegistryIntegration:
         """If URL is in user message, it should override registry."""
         registry = self._make_registry(tmp_path)
 
-        src = tmp_path / "grpo.jsonl"
+        src = tmp_path / "online_rl.jsonl"
         import jsonlines
 
         with jsonlines.open(str(src), "w") as w:
@@ -1244,7 +1244,7 @@ class TestRegistryIntegration:
         """When enabled, registry target should replace stale in-message URLs."""
         registry = self._make_registry(tmp_path)
 
-        src = tmp_path / "grpo.jsonl"
+        src = tmp_path / "online_rl.jsonl"
         import jsonlines
 
         with jsonlines.open(str(src), "w") as w:
@@ -1274,7 +1274,7 @@ class TestRegistryIntegration:
         """Legacy quickstart/recon injected sections must be removed."""
         registry = self._make_registry(tmp_path)
 
-        src = tmp_path / "grpo.jsonl"
+        src = tmp_path / "online_rl.jsonl"
         import jsonlines
 
         with jsonlines.open(str(src), "w") as w:
@@ -1324,7 +1324,7 @@ class TestRegistryIntegration:
 
     def test_target_host_override_applies_to_raw_host_port_target(self, tmp_path):
         """Host override should rewrite raw host:port targets (crypto/pwn)."""
-        src = tmp_path / "grpo.jsonl"
+        src = tmp_path / "online_rl.jsonl"
         import jsonlines
 
         with jsonlines.open(str(src), "w") as w:
@@ -1358,7 +1358,7 @@ class TestRegistryIntegration:
 
     def test_target_port_offset_applies_to_raw_host_port_target(self, tmp_path):
         """Port offset should rewrite raw host:port targets (crypto/pwn)."""
-        src = tmp_path / "grpo.jsonl"
+        src = tmp_path / "online_rl.jsonl"
         import jsonlines
 
         with jsonlines.open(str(src), "w") as w:
@@ -1395,7 +1395,7 @@ class TestRegistryIntegration:
         """Static challenges should get file:///root/challenge/ target (not localhost)."""
         registry = self._make_registry(tmp_path)
 
-        src = tmp_path / "grpo.jsonl"
+        src = tmp_path / "online_rl.jsonl"
         import jsonlines
 
         with jsonlines.open(str(src), "w") as w:
@@ -1422,7 +1422,7 @@ class TestRegistryIntegration:
         """Challenge not in registry should not crash, target stays None."""
         registry = self._make_registry(tmp_path)
 
-        src = tmp_path / "grpo.jsonl"
+        src = tmp_path / "online_rl.jsonl"
         import jsonlines
 
         with jsonlines.open(str(src), "w") as w:
@@ -1447,7 +1447,7 @@ class TestRegistryIntegration:
         registry = self._make_registry(tmp_path)
         registry.set_target_overrides({"eval-me": "http://localhost:43012"})
 
-        src = tmp_path / "grpo.jsonl"
+        src = tmp_path / "online_rl.jsonl"
         import jsonlines
 
         with jsonlines.open(str(src), "w") as w:
@@ -1491,7 +1491,7 @@ class TestRegistryIntegration:
                 },
             ],
         )
-        src = tmp_path / "grpo.jsonl"
+        src = tmp_path / "online_rl.jsonl"
         import jsonlines
 
         with jsonlines.open(str(src), "w") as w:
@@ -1534,14 +1534,14 @@ class TestRuntimeGuards:
     def test_validate_qwen3_5_runtime_dependencies_raises_when_missing(
         self, monkeypatch
     ):
-        import trajgym.training.online_rl.runtime as grpo_mod
+        import trajgym.training.online_rl._utils as utils_mod
 
         class _Cfg:
             model_type = "qwen3_5"
             architectures = ["Qwen3_5ForConditionalGeneration"]
 
         monkeypatch.setattr(
-            grpo_mod,
+            utils_mod,
             "_missing_qwen3_5_fast_path_deps",
             lambda: ["flash-linear-attention (module: fla)", "causal-conv1d"],
         )
@@ -1553,14 +1553,14 @@ class TestRuntimeGuards:
             )
 
     def test_validate_qwen3_5_runtime_dependencies_allows_override(self, monkeypatch):
-        import trajgym.training.online_rl.runtime as grpo_mod
+        import trajgym.training.online_rl._utils as utils_mod
 
         class _Cfg:
             model_type = "qwen3_5"
             architectures = ["Qwen3_5ForConditionalGeneration"]
 
         monkeypatch.setattr(
-            grpo_mod,
+            utils_mod,
             "_missing_qwen3_5_fast_path_deps",
             lambda: ["flash-linear-attention (module: fla)"],
         )
@@ -1690,7 +1690,7 @@ class TestDifficultyCurriculum:
 
     @staticmethod
     def _make_samples(challenge_ids):
-        """Create minimal GRPO samples for given challenge IDs."""
+        """Create minimal Online RL samples for given challenge IDs."""
         return [
             {
                 "messages": [
@@ -1707,8 +1707,8 @@ class TestDifficultyCurriculum:
         """When no difficulty filter is set, all samples pass through."""
         registry = self._write_registry(tmp_path / "reg.yaml", self._make_challenges())
         all_ids = [c["id"] for c in self._make_challenges()]
-        src = tmp_path / "grpo.jsonl"
-        _write_grpo_jsonl(src, self._make_samples(all_ids))
+        src = tmp_path / "online_rl.jsonl"
+        _write_online_rl_jsonl(src, self._make_samples(all_ids))
 
         result = _convert_online_rl_data(
             str(src), str(tmp_path / "out"), registry=registry
@@ -1723,8 +1723,8 @@ class TestDifficultyCurriculum:
         """difficulty_max='medium' should drop hard, expert, master."""
         registry = self._write_registry(tmp_path / "reg.yaml", self._make_challenges())
         all_ids = [c["id"] for c in self._make_challenges()]
-        src = tmp_path / "grpo.jsonl"
-        _write_grpo_jsonl(src, self._make_samples(all_ids))
+        src = tmp_path / "online_rl.jsonl"
+        _write_online_rl_jsonl(src, self._make_samples(all_ids))
 
         result = _convert_online_rl_data(
             str(src),
@@ -1744,8 +1744,8 @@ class TestDifficultyCurriculum:
         """difficulty_min='hard' should drop very_easy, easy, medium."""
         registry = self._write_registry(tmp_path / "reg.yaml", self._make_challenges())
         all_ids = [c["id"] for c in self._make_challenges()]
-        src = tmp_path / "grpo.jsonl"
-        _write_grpo_jsonl(src, self._make_samples(all_ids))
+        src = tmp_path / "online_rl.jsonl"
+        _write_online_rl_jsonl(src, self._make_samples(all_ids))
 
         result = _convert_online_rl_data(
             str(src),
@@ -1765,8 +1765,8 @@ class TestDifficultyCurriculum:
         """difficulty_min='easy', difficulty_max='hard' keeps easy/medium/hard."""
         registry = self._write_registry(tmp_path / "reg.yaml", self._make_challenges())
         all_ids = [c["id"] for c in self._make_challenges()]
-        src = tmp_path / "grpo.jsonl"
-        _write_grpo_jsonl(src, self._make_samples(all_ids))
+        src = tmp_path / "online_rl.jsonl"
+        _write_online_rl_jsonl(src, self._make_samples(all_ids))
 
         result = _convert_online_rl_data(
             str(src),
@@ -1785,8 +1785,8 @@ class TestDifficultyCurriculum:
 
     def test_invalid_difficulty_min_raises(self, tmp_path):
         """Invalid difficulty_min should raise ValueError."""
-        src = tmp_path / "grpo.jsonl"
-        _write_grpo_jsonl(src)
+        src = tmp_path / "online_rl.jsonl"
+        _write_online_rl_jsonl(src)
         with pytest.raises(ValueError, match="Invalid difficulty_min"):
             _convert_online_rl_data(
                 str(src),
@@ -1796,8 +1796,8 @@ class TestDifficultyCurriculum:
 
     def test_invalid_difficulty_max_raises(self, tmp_path):
         """Invalid difficulty_max should raise ValueError."""
-        src = tmp_path / "grpo.jsonl"
-        _write_grpo_jsonl(src)
+        src = tmp_path / "online_rl.jsonl"
+        _write_online_rl_jsonl(src)
         with pytest.raises(ValueError, match="Invalid difficulty_max"):
             _convert_online_rl_data(
                 str(src),
@@ -1807,8 +1807,8 @@ class TestDifficultyCurriculum:
 
     def test_inverted_range_raises(self, tmp_path):
         """difficulty_min harder than difficulty_max should raise."""
-        src = tmp_path / "grpo.jsonl"
-        _write_grpo_jsonl(src)
+        src = tmp_path / "online_rl.jsonl"
+        _write_online_rl_jsonl(src)
         with pytest.raises(ValueError, match="is harder than"):
             _convert_online_rl_data(
                 str(src),
@@ -1819,8 +1819,8 @@ class TestDifficultyCurriculum:
 
     def test_without_registry_no_filtering(self, tmp_path):
         """Difficulty filter with no registry should keep all samples."""
-        src = tmp_path / "grpo.jsonl"
-        _write_grpo_jsonl(src)  # 2 default samples, no registry
+        src = tmp_path / "online_rl.jsonl"
+        _write_online_rl_jsonl(src)  # 2 default samples, no registry
 
         result = _convert_online_rl_data(
             str(src),

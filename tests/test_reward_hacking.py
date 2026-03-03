@@ -2,7 +2,7 @@
 """Reward function stress tests: hacking vectors, long-horizon scoring, edge cases.
 
 Tests the Reward function against adversarial and realistic scenarios
-to identify reward hacking opportunities before expensive GRPO training.
+to identify reward hacking opportunities before expensive Online RL training.
 
 Run: pytest tests/test_reward_hacking.py -v
 """
@@ -575,14 +575,14 @@ class TestComponentBreakdown:
 
 
 # =======================================================================
-# 4. COMPARATIVE SCORING (GRPO GRADIENT SIGNAL)
+# 4. COMPARATIVE SCORING (Online RL GRADIENT SIGNAL)
 # =======================================================================
 
 
 class TestGRPOGradientSignal:
-    """Verify that reward ordering matches human intuition for GRPO training.
+    """Verify that reward ordering matches human intuition for Online RL training.
 
-    In GRPO, the model sees pairs/groups and learns from relative differences.
+    In Online RL, the model sees pairs/groups and learns from relative differences.
     These tests verify the ranking is correct.
     """
 
@@ -699,7 +699,7 @@ class TestGRPOGradientSignal:
         ), f"Structured ({s[0]:.3f}) should outscore unstructured ({s[1]:.3f})"
 
     def test_variance_across_batch(self, reward):
-        """GRPO needs variance in reward scores across a generation batch."""
+        """Online RL needs variance in reward scores across a generation batch."""
         # Simulate 8 completions (typical num_generations=8)
         completions = [
             completion([shell("nmap target")]),
@@ -733,7 +733,7 @@ class TestGRPOGradientSignal:
         variance = sum((s - sum(scores) / len(scores)) ** 2 for s in scores) / len(
             scores
         )
-        assert variance > 0.01, f"Insufficient variance for GRPO: {variance:.4f}"
+        assert variance > 0.01, f"Insufficient variance for ONLINE_RL: {variance:.4f}"
         assert (
             max(scores) - min(scores) > 0.3
         ), f"Gap too small: {max(scores):.3f} - {min(scores):.3f}"
@@ -745,7 +745,7 @@ class TestGRPOGradientSignal:
 
 
 class TestOnlineModeEdgeCases:
-    """Test scenarios specific to online GRPO with tools= mode."""
+    """Test scenarios specific to online RL with tools= mode."""
 
     def test_metadata_success_no_longer_overrides_text(self, reward):
         """metadata_success bypass removed; both should score equally."""
@@ -915,7 +915,7 @@ class TestScoreDistribution:
         assert scores[0] < 0.1, f"Worst case too high: {scores[0]}"
 
     def test_success_failure_gap(self, reward):
-        """Gap between success and failure must be large enough for GRPO."""
+        """Gap between success and failure must be large enough for Online RL."""
         successes = []
         failures = []
         for i in range(10):

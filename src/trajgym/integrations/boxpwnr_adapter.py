@@ -29,6 +29,7 @@ class BoxPwnrAgent:
         strategy: str = "chat_tools",
         traces_dir: str = "./targets",
         reasoning_effort: str = "medium",
+        custom_instructions: str | None = None,
         **kwargs: Any,
     ):
         self.model = model
@@ -36,6 +37,7 @@ class BoxPwnrAgent:
         self.strategy = strategy
         self.traces_dir = traces_dir
         self.reasoning_effort = reasoning_effort
+        self.custom_instructions = custom_instructions
         self._extra_kwargs = kwargs
 
     def solve(
@@ -45,6 +47,7 @@ class BoxPwnrAgent:
         ground_truth_flag: str = "",
         max_steps: int = 30,
         timeout: int = 300,
+        custom_instructions: str | None = None,
     ) -> AgentResult:
         """Solve a challenge using BoxPwnr's AgentRunner.
 
@@ -54,6 +57,7 @@ class BoxPwnrAgent:
             ground_truth_flag: Expected flag (for post-run validation).
             max_steps: Maximum conversation turns.
             timeout: Maximum time in seconds (converted to minutes for BoxPwnr).
+            custom_instructions: Override instance custom_instructions for this solve.
 
         Returns:
             AgentResult with success/failure and metadata.
@@ -62,6 +66,7 @@ class BoxPwnrAgent:
 
         start = time.monotonic()
         max_time_min = max(1, timeout // 60)
+        effective_instructions = custom_instructions if custom_instructions is not None else self.custom_instructions
 
         runner = AgentRunner(
             platform=self.platform,
@@ -71,6 +76,7 @@ class BoxPwnrAgent:
             max_time=max_time_min,
             traces_dir=self.traces_dir,
             reasoning_effort=self.reasoning_effort,
+            custom_instructions=effective_instructions,
             **self._extra_kwargs,
         )
 

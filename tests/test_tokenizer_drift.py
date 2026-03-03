@@ -5,7 +5,7 @@ def test_tokenizer_drift_schema_injection():
     """
     Test that the tool schema injection in TrajGymTextEnv matches the exact
     expected string format used during SFT (e.g. by TRL or formatters).
-    This ensures no token drift occurs between offline SFT and online GRPO.
+    This ensures no token drift occurs between offline SFT and online RL.
     """
     env = TrajGymTextEnv(
         target="http://localhost:8000",
@@ -27,7 +27,7 @@ def test_tokenizer_drift_schema_injection():
 
     initial_prompt = [{"role": "system", "content": "You are a helpful CTF agent."}]
 
-    # Inject tool schemas (simulating GRPO start)
+    # Inject tool schemas (simulating Online RL start)
     injected_prompt = env._inject_tool_schemas(initial_prompt)
 
     # Extract the system prompt

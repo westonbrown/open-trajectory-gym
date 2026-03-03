@@ -15,6 +15,7 @@ BRIDGE = REPO_ROOT / "src" / "trajgym" / "agent" / "framework_runtime_bridge.py"
 
 def _run_bridge(payload: dict, env: dict[str, str] | None = None) -> dict:
     merged_env = dict(os.environ)
+    merged_env["PYTHONPATH"] = str(REPO_ROOT / "src")
     if env is not None:
         merged_env.update(env)
     proc = subprocess.run(

@@ -44,7 +44,7 @@ logger = logging.getLogger(__name__)
 _executor = None  # type: ignore
 _episode_id: str | None = None
 
-# Episode lifecycle tracking (managed by the GRPO trainer).
+# Episode lifecycle tracking (managed by the Online RL trainer).
 _thread_local = threading.local()
 _batch_gen: int = 0
 _batch_gen_lock = threading.Lock()
@@ -140,7 +140,7 @@ def mark_step_begin(
 ) -> None:
     """Reset environment and clear episode state for a new training step.
 
-    Called by the GRPO trainer before each batch's tool-call loop.
+    Called by the Online RL trainer before each batch's tool-call loop.
 
     Args:
         challenge_id: Optional challenge to load on reset (unused, kept for API compat).
@@ -176,9 +176,9 @@ def get_last_step_info() -> dict:
 
 
 def get_all_tools() -> list:
-    """Return the curated tool set for GRPO training.
+    """Return the curated tool set for Online RL training.
 
-    Returns the 8 core tools for online GRPO.
+    Returns the 8 core tools for online RL.
 
     Included (8 tools): shell_command, python_code, read_file, grep,
     file_search, apply_patch, web_search, flag_found.

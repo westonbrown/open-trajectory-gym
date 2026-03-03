@@ -1,6 +1,6 @@
-# SkyRL GRPO config for Qwen/Qwen3-8B (8B dense, local non-colocated vLLM)
+# SkyRL Online RL config for Devstral-Small-2-24B-Instruct (24B dense)
+# Strong dense alternative — good SFT+Online RL candidate, fits single H100.
 # Matches SkyRLConfig dataclass schema.
-# Used as reference — actual config is built by training/online_rl/runtime.py from archive/training_qwen3_8b.yaml.
 
 data:
   train_data:
@@ -10,38 +10,36 @@ trainer:
   strategy: fsdp2
   bf16: true
   gradient_checkpointing: true
-  flash_attn: false
-  use_sample_packing: false
   seed: 42
   epochs: 1
   train_batch_size: 1
   micro_train_batch_size_per_gpu: 1
-  max_prompt_length: 8192
+  max_prompt_length: 32768
   ckpt_path: outputs/online_rl
   ckpt_interval: 50
   export_path: outputs/online_rl/final
   log_path: outputs/online_rl/logs
   project_name: trajgym
-  run_name: online-rl-qwen3-8b
+  run_name: online-rl-devstral-24b
   logger: none
 
   placement:
-    colocate_all: false
+    colocate_all: true
 
   ref:
     model:
-      path: outputs/sft_qwen3_merged/
+      path: outputs/sft-merged/
 
   policy:
     model:
-      path: outputs/sft_qwen3_merged/
+      path: outputs/sft-merged/
       lora:
         rank: 64
         alpha: 128
         dropout: 0.0
         target_modules: "q_proj,k_proj,v_proj,o_proj,gate_proj,up_proj,down_proj"
     optimizer_config:
-      lr: 5.0e-6
+      lr: 2.0e-6
       weight_decay: 0.0
       max_grad_norm: 5.0
 
@@ -57,26 +55,22 @@ trainer:
 generator:
   model_dtype: bfloat16
   backend: vllm
-  # Keep local engines when LoRA is enabled (remote mode cannot sync LoRA).
   run_engines_locally: true
   num_inference_engines: 1
-  weight_sync_backend: nccl
-  # 4 samples per prompt (reduced from 8 for 8B model memory).
-  n_samples_per_prompt: 4
-  max_input_length: 8192
+  n_samples_per_prompt: 8
+  max_input_length: 32768
   max_turns: 15
   inference_engine_tensor_parallel_size: 1
-  gpu_memory_utilization: 0.15
+  gpu_memory_utilization: 0.8
   max_num_seqs: 32
-  max_num_batched_tokens: 8192
+  max_num_batched_tokens: 32768
   enable_prefix_caching: true
   enable_chunked_prefill: true
   sampling_params:
     max_generate_length: 8192
     temperature: 1.0
     top_p: 0.95
-    # logprobs must be null for remote/external vLLM mode.
-    logprobs: null
+    logprobs: 1
 
 environment:
   env_class: trajgym

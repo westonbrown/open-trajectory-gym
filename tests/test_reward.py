@@ -11,7 +11,7 @@ Validates the 9-signal reward function:
 - Cognitive (words-per-action density)
 - Hallucination penalty (wrong flag submission)
 - Interaction quality (output-aware HTTP progress)
-- Noise (variance guarantee for GRPO)
+- Noise (variance guarantee for Online RL)
 - Weight validation (auto-normalizes to sum 1.0)
 """
 

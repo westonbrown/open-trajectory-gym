@@ -3,7 +3,7 @@
 
 3-stage pipeline:
   Stage 1 (SFT):       TRL
-  Stage 2 (online RL): SkyRL (GRPO/RLOO style policy updates)
+  Stage 2 (online RL): SkyRL (Online RL/RLOO style policy updates)
   Stage 3 (GEPA):      DSPy prompt evolution, no weight updates
 
 Usage:
@@ -108,7 +108,7 @@ def _patch_merged_tokenizer_config(base_model_id: str, output_dir: str) -> bool:
     """Patch merged tokenizer_config.json when tokenizer_class is incompatible.
 
     Some merge environments can emit ``tokenizer_class=TokenizersBackend`` in the
-    merged artifact, which older Transformers runtimes cannot import during GRPO.
+    merged artifact, which older Transformers runtimes cannot import during Online RL.
 
     Returns:
         True if tokenizer_config.json was replaced, False otherwise.
@@ -413,7 +413,7 @@ def main() -> None:
     # -- stage-2 online RL (SkyRL) ---------------------------------------
     rl_parser = subparsers.add_parser(
         "rl",
-        aliases=["grpo"],
+        aliases=["online_rl"],
         help="Run stage-2 online RL via SkyRL",
     )
     _add_online_rl_args(rl_parser)

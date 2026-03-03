@@ -94,7 +94,7 @@ def sample_sft_record(sample_tool_calling_messages):
 
 @pytest.fixture
 def sample_grpo_record(sample_tool_calling_messages):
-    """A minimal GRPO-style JSONL record with ground_truth_flag."""
+    """A minimal Online RL-style JSONL record with ground_truth_flag."""
     return {
         "messages": sample_tool_calling_messages,
         "metadata": {

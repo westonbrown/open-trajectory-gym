@@ -477,11 +477,11 @@ class TestRLOONConfig:
         assert algo["advantage_estimator"] == "rloo_n"
 
     def test_explicit_grpo_from_config(self, base_config):
-        """Explicit grpo in config should override default."""
-        base_config["online_rl"]["advantage_estimator"] = "grpo"
+        """Explicit online RL in config should override default."""
+        base_config["online_rl"]["advantage_estimator"] = "online_rl"
         result = _build_skyrl_config("/model", "/out", base_config, "/data.jsonl")
         algo = result["trainer"]["algorithm"]
-        assert algo["advantage_estimator"] == "grpo"
+        assert algo["advantage_estimator"] == "online_rl"
 
     def test_n_samples_per_prompt_defaults_to_8(self, base_config):
         """OpenThoughts uses 8 samples per prompt (vs old default of 4)."""

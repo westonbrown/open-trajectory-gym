@@ -493,7 +493,7 @@ class TrajGymTextEnv(_Base):
                 prompt = proxy_prompt
 
         # Inject tool schemas into the system message so the model knows
-        # what tools are available during GRPO rollouts.
+        # what tools are available during Online RL rollouts.
         #
         # When native_tool_schemas=True, tools are passed via
         # chat_template_kwargs["tools"] → apply_chat_template(tools=...)
@@ -949,7 +949,7 @@ class TrajGymTextEnv(_Base):
             sys_content = prompt[0].get("content", "")
             # Skip if tool schemas already present (check multiple variants:
             # "# Available Tools" from our injection, "Available tools:" from
-            # GRPO training data system prompts, "<tools>" from Nanbeige/Qwen
+            # Online RL training data system prompts, "<tools>" from Nanbeige/Qwen
             # native format).  Prevents double injection that wastes ~800
             # context tokens.
             has_tools = (
