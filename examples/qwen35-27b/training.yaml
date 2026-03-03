@@ -67,9 +67,9 @@ online_rl:
   batch_size: 1
   # batch_size(1) * grad_accum(8) must be divisible by num_gen(8): 8 % 8 = 0
   gradient_accumulation_steps: 8
-  # Higher LR than SFT: with RLOO advantages of 0.5+, higher LR ensures
-  # gradient signal actually updates LoRA weights.
-  learning_rate: 5.0e-5
+  # 5e-6 is stable with max_grad_norm=1.0. Higher (5e-5) caused grad_norm
+  # spikes to 27K on hard challenges and diverged on smaller models.
+  learning_rate: 5.0e-6
   warmup_ratio: 0.05
   beta: 0.0
   loss_type: dapo
@@ -84,13 +84,15 @@ online_rl:
   num_generations: 8
   advantage_estimator: rloo
   # Per-turn generation cap. Most completions are <2K tokens.
-  # 8K allows Python solvers without truncating mid-tool-call.
-  max_completion_length: 8192
-  # 60 tool iterations for long-horizon multi-step episodes.
-  max_tool_calling_iterations: 60
-  # Progressive horizon: start shorter, expand for harder challenges.
+  # 6K prevents trainer OOM while preserving full solve trajectories.
+  # 4K truncates tool calls; 8K OOMs on long responses.
+  max_completion_length: 6144
+  # 20 turns max. 30+ turns can grow context to 67K tokens and OOM
+  # the trainer SDPA backward pass. Solved episodes average 10 turns.
+  max_tool_calling_iterations: 20
+  # Flat 20-turn horizon. Higher horizons OOM the trainer GPU.
   horizon_schedule:
-    rounds: [20, 30, 45, 60]
+    rounds: [20]
     step_interval: 10
   # Rollout statuses hard-masked (reward=0) so infra/parser failures
   # do not contaminate policy gradients.
@@ -124,8 +126,12 @@ online_rl:
   enable_prefix_caching: true
   enable_chunked_prefill: true
   enforce_eager: true
-  max_prompt_length: 32768
-  vllm_max_model_len: 65536
+  # Reduced from 32K to 24K to control trainer memory. Multi-turn context
+  # truncates early turns but recent context matters most for RL credit.
+  max_prompt_length: 24576
+  # 131K for vLLM KV cache (GPU 0 only). Qwen3.5 hybrid attention uses
+  # only 16/64 layers for KV → very efficient: 8 seqs x 131K ≈ 32 GB.
+  vllm_max_model_len: 131072
   # Force text-only vLLM path for Qwen3.5 conditional-generation config.
   vllm_language_model_only: true
   vllm_attention_backend: "TRITON_ATTN"
